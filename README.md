@@ -8,13 +8,13 @@ this graph is left unspecified (save that it must be connected), and the
 protocol should support any permutation.
 
 Note: Can ``inner servers'', i.e, servers that only implement the server-server
-and not client-server protocol, exist?
+and not client-server protocol, exist? Likely yes, logging in will occur similarly to irc and connection attempts will select only from servers that offer the client protocol, and relay-only servers will implement the routing table of other servers.
 
-Note: How are servers identified (likely a server-username)?
+Note: How are servers identified (likely a server-username)? Possibly by their hostname?
 
 ## Crypto
 
-Client-server and server-servver communications are all encrypted, and all
+Client-server and server-server communications are all encrypted, and all
 servers are authenticated.  (Do clients themselves need to be authenticated?)
 
 Note: How much to we have to think about, e.g., OTR here?
@@ -41,7 +41,7 @@ not a given user is online.
 
 Users are also paired with their identifying public key in this list.  Every
 user obligatorily has a unique public key associated with them, and every
-server must know about this key.
+server must know about this key. Channels likewise will have some cryptographic keys which may not be known to the server (if this is possible).
 
 Individual users and channels live on a specific server (for users, this is the
 server they are directly connected to; for channels, this is generally the
@@ -96,6 +96,8 @@ that some of these (away) are present or not, others (invite-only/public)
 partition a possibility space, and others (op, voice) may exist multiple times
 with different arguments.
 
+Note: Some of these may be automatically set by the server (esp. "user=nick"
+
 ### User
 
 * Away: marks the user as away, may take an optional message argument.
@@ -108,7 +110,7 @@ with different arguments.
 * Anonymous: nicknames and usernames of source messages aren't reported
 * Anonymous': usernames of source messages aren't reported (nicks are)
 * Nick-free: cannot have nicks
-* Democratic/Anarchic: alternative styles of moderation
+* Democratic/Anarchic/Irc-plays-irc: alternative styles of moderation
 * Unencrypted
 * Persistant: maintains state after all users leave
 * Quiet: Unvoiced users can't talk
@@ -128,6 +130,7 @@ others)
 * User=nick: user's nick is string-equivilent to their username
 
 # Message Format
+(Possibly should have a name other than "Message"?)
 
 Messages are structs with a command field and an argument_block field.  The
 command field is always exposed to the server (i.e.: unencrypted), and
@@ -139,14 +142,10 @@ which may or may not be server-inspectable.
 Each command is listed, followed by a description of the argument structure
 associated with it and what it does.
 
-* Talk: user/channel (unencrypted), source (encrypted?),
+* Talk: user/channel (unencrypted), source (unencrypted),
         flag (encrypted), content (encrypted)
 
-    Server relays the entire message to the the user/channel specified.  If
-    the source is null, this means that the message originated from the
-    client/server that the message was immediately received from, and the
-    server must encrypt the sourced identifier with the targets public key,
-    set the source field appropriately.
+    Server relays the entire message to the the user/channel (target) specified.
 
     The flag argument specifies things like what in IRC or CTCP ACTION or
     NOTICE commands.  (TODO: elaborate on possible values here).
@@ -214,7 +213,7 @@ associated with it and what it does.
 
 * Topic: user/channel (unencrypted), topic (encrypted)
 
-    If the topic is null, request the realname/topic of the specified user,
+    If the topic is null, request the realname/topic of the specified user/channel,
     otherwise try to set it.
 
 ## Formatting
