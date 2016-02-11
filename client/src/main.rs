@@ -1,8 +1,6 @@
 #![feature(lookup_host)]
 #![feature(ip_addr)]
 
-#![feature(str_char)]
-
 extern crate ncurses;
 extern crate mio;
 extern crate nix;
@@ -222,17 +220,17 @@ fn main() {
 
     // register stdin
     let sock = unsafe { PipeReader::from_raw_fd(0) };
-    event_loop.register_opt(&sock, STDIN,
+    event_loop.register(&sock, STDIN,
         EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
 
     // register foonetic
     let foo_irc = connect("irc.foonetic.net", 6667);
-    event_loop.register_opt(&foo_irc, FREENODE,
+    event_loop.register(&foo_irc, FREENODE,
         EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
 
     // register freenode
     let free_irc = connect("irc.sushigirl.tokyo", 6667);
-    event_loop.register_opt(&free_irc, FOONETIC,
+    event_loop.register(&free_irc, FOONETIC,
         EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
 
     // Start handling events
