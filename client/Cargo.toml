@@ -1,9 +1,10 @@
 [package]
 name = "client"
 version = "0.1.0"
-authors = ["Lily Houghton <lily.anachrome@gmail.com>"]
+authors = ["Lily Houghton <lily.anachrome@gmail.com> AJ Trainor <lhk@lhk.me>"]
 
 [dependencies]
 ncurses = "*"
 mio = "*"
 nix = "*"
+capnp = "*"
