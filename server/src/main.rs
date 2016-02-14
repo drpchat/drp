@@ -15,6 +15,16 @@ use std::net::SocketAddr;
 
 use std::str::FromStr;
 
+fn main() {
+    // Create an event loop
+    let mut handler = Server::new();
+
+    let mut event_loop = EventLoop::new().unwrap();
+
+    event_loop.register(&handler.sock, handler.token, EventSet::readable(), PollOpt::empty()).unwrap();
+    event_loop.run(&mut handler).unwrap();
+}
+
 struct Server {
     token: Token,
     sock: TcpListener,
@@ -29,19 +39,67 @@ impl Server {
             conns: Slab::new_starting_at(Token(2), 128),
         }
     }
+
+    fn accept(&mut self, event_loop: &mut EventLoop<Server>) {
+        let sock = match self.sock.accept() {
+            Ok(s) => {
+                match s {
+                    Some(so) => so.0,
+                    None => {
+                        println!("sock error of kind b");
+                        return;
+                    },
+                }
+            },
+            Err(_) => {
+                println!("sock error of kind a");
+                return;
+            },
+        };
+
+        match self.conns.insert(sock) {
+            Ok(token) => {
+                // register the guy
+                event_loop.register(&self.conns[token], token,
+                    EventSet::all() ^ EventSet::writable(),
+                    PollOpt::empty()).unwrap();
+            },
+            Err(_) => {
+                println!("failed to make new connect");
+            },
+        }
+    }
 }
 
 impl Handler for Server {
     type Timeout = ();
     type Message = ();
 
-    fn ready(&mut self, event_loop: &mut EventLoop<Server>, token: Token, events: EventSet) {
+    fn ready(&mut self,
+        event_loop: &mut EventLoop<Server>, token: Token, events: EventSet) {
+
         if events.is_error() {
-            panic!("is_error");
-        }
+            if token == self.token {
+                println!("server got error");
+                event_loop.shutdown();
+            } else {
+                println!("connection on {:?} got error", token);
+                self.conns.remove(token);
+            }
+
+            return;
+        } 
 
         if events.is_hup() {
-            panic!("it's over!");
+            if token == self.token {
+                println!("server got hup");
+                event_loop.shutdown();
+            } else {
+                println!("connection on {:?} got hup", token);
+                self.conns.remove(token);
+            }
+
+            return;
         }
 
         if events.is_writable() {
@@ -51,31 +109,8 @@ impl Handler for Server {
 
         if events.is_readable() {
             println!("we got a read!");
-            if self.token == token {
-                // accept a new connection
-                let sock = match self.sock.accept() {
-                    Ok(s) => {
-                        match s {
-                            Some(so) => so.0,
-                            None => panic!("sock error of kind b"),
-                        }
-                    },
-                    Err(_) => {
-                        panic!("sock error of kind a");
-                    },
-                };
-
-                match self.conns.insert(sock) {
-                    Ok(token) => {
-                        // register the guy
-                        event_loop.register(&self.conns[token], token,
-                            EventSet::all() ^ EventSet::writable(),
-                            PollOpt::empty()).unwrap();
-                    },
-                    Err(_) => {
-                        panic!("failed to make new connect");
-                    },
-                }
+            if token == self.token {
+                self.accept(event_loop);
             } else {
                 // give it to the guy
                 let mut recv_buf = ByteBuf::mut_with_capacity(2048);
@@ -93,14 +128,4 @@ impl Handler for Server {
             }
         }
     }
-}
-
-fn main() {
-    // Create an event loop
-    let mut handler = Server::new();
-
-    let mut event_loop = EventLoop::new().unwrap();
-
-    event_loop.register(&handler.sock, handler.token, EventSet::readable(), PollOpt::empty()).unwrap();
-    event_loop.run(&mut handler).unwrap();
 }
