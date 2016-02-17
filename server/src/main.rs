@@ -34,6 +34,7 @@ struct Server {
 struct Connection {
     sock: TcpStream,
     messages: Vec<ByteBuf>,
+    token: Token,
 }
 
 impl Server {
@@ -62,14 +63,14 @@ impl Server {
             },
         };
 
-        match self.conns.insert(Connection { sock: sock, messages: Vec::new() }) {
-            Ok(token) => {
+        match self.conns.insert_with(|token| { Connection { sock: sock, messages: Vec::new(), token: token } }) {
+            Some(token) => {
                 // register the guy
                 event_loop.register(&self.conns[token].sock, token,
                     EventSet::all(),
                     PollOpt::empty()).unwrap();
             },
-            Err(_) => {
+            None => {
                 println!("failed to make new connect");
             },
         }
@@ -115,6 +116,11 @@ impl Handler for Server {
             self.conns[token].messages.pop().and_then(|mut msg| {
                 self.conns[token].sock.try_write_buf(&mut msg).unwrap()
             });
+
+            if self.conns[token].messages.is_empty() {
+                event_loop.reregister(&mut self.conns[token].sock, token,
+                    EventSet::readable(), PollOpt::empty()).unwrap();
+            }
         }
 
         if events.is_readable() {
@@ -129,6 +135,8 @@ impl Handler for Server {
                         for conn in self.conns.iter_mut() {
                             conn.messages.push(
                                 ByteBuf::from_slice(recv_buf.bytes()));
+                            event_loop.reregister(&mut conn.sock, conn.token,
+                                EventSet::all(), PollOpt::empty()).unwrap();
                         }
 
                         for c in recv_buf.flip().chars() {
