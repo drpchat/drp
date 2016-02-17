@@ -28,7 +28,12 @@ fn main() {
 struct Server {
     token: Token,
     sock: TcpListener,
-    conns: Slab<TcpStream>,
+    conns: Slab<Connection>,
+}
+
+struct Connection {
+    sock: TcpStream,
+    messages: Vec<ByteBuf>,
 }
 
 impl Server {
@@ -57,11 +62,11 @@ impl Server {
             },
         };
 
-        match self.conns.insert(sock) {
+        match self.conns.insert(Connection { sock: sock, messages: Vec::new() }) {
             Ok(token) => {
                 // register the guy
-                event_loop.register(&self.conns[token], token,
-                    EventSet::all() ^ EventSet::writable(),
+                event_loop.register(&self.conns[token].sock, token,
+                    EventSet::all(),
                     PollOpt::empty()).unwrap();
             },
             Err(_) => {
@@ -104,7 +109,12 @@ impl Handler for Server {
 
         if events.is_writable() {
             println!("testo");
-            // not yet care abouted
+
+            assert!(token != self.token);
+            
+            self.conns[token].messages.pop().and_then(|mut msg| {
+                self.conns[token].sock.try_write_buf(&mut msg).unwrap()
+            });
         }
 
         if events.is_readable() {
@@ -114,15 +124,21 @@ impl Handler for Server {
             } else {
                 // give it to the guy
                 let mut recv_buf = ByteBuf::mut_with_capacity(2048);
-                match self.conns[token].try_read_buf(&mut recv_buf) {
+                match self.conns[token].sock.try_read_buf(&mut recv_buf) {
                     Ok(Some(_)) => {
+                        for conn in self.conns.iter_mut() {
+                            conn.messages.push(
+                                ByteBuf::from_slice(recv_buf.bytes()));
+                        }
+
                         for c in recv_buf.flip().chars() {
                             print!("{}", c.unwrap());
                         }
                     },
-                    Ok(None) | Err(_) => {
-                        // nope
-                        ()
+                    Ok(None) => (), // EAGAIN
+                    Err(_) => {
+                        println!("error while reading");
+                        self.conns.remove(token);
                     },
                 }
             }
