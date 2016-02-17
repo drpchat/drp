@@ -75,6 +75,30 @@ impl Server {
             },
         }
     }
+
+    fn forward(&mut self, event_loop: &mut EventLoop<Server>, token: Token) {
+        // give it to the guy
+        let mut recv_buf = ByteBuf::mut_with_capacity(2048);
+        match self.conns[token].sock.try_read_buf(&mut recv_buf) {
+            Ok(Some(_)) => {
+                for conn in self.conns.iter_mut() {
+                    conn.messages.push(
+                        ByteBuf::from_slice(recv_buf.bytes()));
+                    event_loop.reregister(&mut conn.sock, conn.token,
+                        EventSet::all(), PollOpt::empty()).unwrap();
+                }
+
+                for c in recv_buf.flip().chars() {
+                    print!("{}", c.unwrap());
+                }
+            },
+            Ok(None) => (), // EAGAIN
+            Err(_) => {
+                println!("error while reading");
+                self.conns.remove(token);
+            },
+        }
+    }
 }
 
 impl Handler for Server {
@@ -109,8 +133,6 @@ impl Handler for Server {
         }
 
         if events.is_writable() {
-            println!("testo");
-
             assert!(token != self.token);
             
             self.conns[token].messages.pop().and_then(|mut msg| {
@@ -128,27 +150,7 @@ impl Handler for Server {
             if token == self.token {
                 self.accept(event_loop);
             } else {
-                // give it to the guy
-                let mut recv_buf = ByteBuf::mut_with_capacity(2048);
-                match self.conns[token].sock.try_read_buf(&mut recv_buf) {
-                    Ok(Some(_)) => {
-                        for conn in self.conns.iter_mut() {
-                            conn.messages.push(
-                                ByteBuf::from_slice(recv_buf.bytes()));
-                            event_loop.reregister(&mut conn.sock, conn.token,
-                                EventSet::all(), PollOpt::empty()).unwrap();
-                        }
-
-                        for c in recv_buf.flip().chars() {
-                            print!("{}", c.unwrap());
-                        }
-                    },
-                    Ok(None) => (), // EAGAIN
-                    Err(_) => {
-                        println!("error while reading");
-                        self.conns.remove(token);
-                    },
-                }
+                self.forward(event_loop, token);
             }
         }
     }
