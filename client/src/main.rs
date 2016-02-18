@@ -21,7 +21,6 @@ use std::collections::VecDeque;
 // for which socket.
 const STDIN: Token = Token(0);
 const FOONETIC: Token = Token(2);
-const FREENODE: Token = Token(3);
 
 fn draw_scroll(scroll: &VecDeque<String>) {
     let mut i = LINES - 2;
@@ -52,11 +51,9 @@ struct Client {
     pipe: PipeReader,
     inbuf: String,
 
-    current_conn: usize,
-    connections: Vec<(TcpStream, VecDeque<String>, String)>,
-
-    on_ctl: bool,
-    ctl_scroll: VecDeque<String>,
+    connection: TcpStream,
+    scroll: VecDeque<String>,
+    outbuf: String,
 }
 
 impl Handler for Client {
@@ -84,7 +81,7 @@ impl Handler for Client {
                 }
             },
 
-            Token(conn) => if event.is_hup() {
+            Token(_) => if event.is_hup() {
                 writeln!(std::io::stderr(), "net hup").unwrap();
                 event_loop.shutdown();
             } else if event.is_error() {
@@ -93,8 +90,8 @@ impl Handler for Client {
             } else if event.is_readable() {
                 let mut buf = vec![0; 512];
 
-                match self.connections[conn - 2].0.read(&mut buf) {
-                    Ok(n) => self.handle_netin(&buf, n, conn - 2),
+                match self.connection.read(&mut buf) {
+                    Ok(n) => self.handle_netin(&buf, n),
 
                     Err(bad) => {
                         writeln!(std::io::stderr(), "bad b! {}", bad).unwrap();
@@ -108,84 +105,50 @@ impl Handler for Client {
 
 impl Client {
     // len is the amount of the buffer we actually filled up
-    fn handle_netin(&mut self, buf: &Vec<u8>, len: usize, conn: usize) {
+    fn handle_netin(&mut self, buf: &Vec<u8>, len: usize) {
         for i in 0..len {
             if buf[i] as char == '\n' { continue }
 
             if buf[i] as char == '\r' {
-                let temp = self.connections[conn].2.clone();
+                let temp = self.outbuf.clone();
                 writeln!(std::io::stderr(), "{}", temp).unwrap();
 
-                self.connections[conn].1.push_front(temp);
-                self.connections[conn].2.clear();
+                self.scroll.push_front(temp);
+                self.outbuf.clear();
             } else {
-                self.connections[conn].2.push(buf[i] as char);
+                self.outbuf.push(buf[i] as char);
             }
         }
 
         clear();
-        draw_scroll(if self.on_ctl { &self.ctl_scroll }
-                              else { &self.connections[self.current_conn].1 });
+        draw_scroll(&self.scroll);
         refresh();
     }
 
     // len is the amount of the buffer we actually filled up
     fn handle_stdin(&mut self, buf: &Vec<u8>, len: usize) {
-        let mut alt = false;
         for i in 0..len {
             writeln!(std::io::stderr(), "key: {:?}", buf[i]).unwrap();
-            if alt {
-                if buf[i] as char == 'a' {
-                    self.on_ctl = !self.on_ctl;
+            match buf[i] as char {
+                '\r' => { // this is what return does ?
+                    self.scroll.push_front(self.inbuf.clone());
                     clear();
-                    draw_scroll(if self.on_ctl { &self.ctl_scroll }
-                                          else { &self.connections[self.current_conn].1 });
-                    refresh();
-                }
-                
-                if buf[i] >= '0' as u8 && buf[i] <= '9' as u8 {
-                    self.current_conn = (buf[i] - '0' as u8) as usize;
-                    if self.current_conn >= self.connections.len() {
-                        writeln!(std::io::stderr(), "not that many").unwrap();
-                        self.current_conn = self.connections.len() - 1;
+                    draw_scroll(&self.scroll);
+
+                    self.inbuf.push_str("\r\n");
+                    match self.connection.write_all(self.inbuf.as_bytes()) {
+                        Ok(_) => (),
+                        Err(bad) => println!("bad d! {:?}", bad),
                     }
 
-                    clear();
-                    draw_scroll(if self.on_ctl { &self.ctl_scroll }
-                                          else { &self.connections[self.current_conn].1 });
-                    refresh();
-                }
-            } else {
-                match buf[i] as char {
-                    '\r' => { // this is what return does ?
-                        if self.on_ctl {
-                            self.ctl_scroll.push_front(self.inbuf.clone());
-                            clear();
-                            draw_scroll(&self.ctl_scroll);
-                        } else {
-                            self.connections[self.current_conn].1.push_front(self.inbuf.clone());
-                            clear();
-                            draw_scroll(&self.connections[self.current_conn].1);
-
-                            self.inbuf.push_str("\r\n");
-                            match self.connections[self.current_conn].0.write_all(self.inbuf.as_bytes()) {
-                                Ok(_) => (),
-                                Err(bad) => println!("bad d! {:?}", bad),
-                            }
-                        }
-
-                        self.inbuf.clear();
-                    },
-                    '\x7f' => { // backspace is delete on linux :<
-                        self.inbuf.pop();
-                    },
-                    '\x1b' => {
-                        alt = true;
-                    }
-                    _ => {
-                        self.inbuf.push(buf[i] as char);
-                    },
-                }
+                    self.inbuf.clear();
+                },
+                '\x7f' => { // backspace is delete on linux :<
+                    self.inbuf.pop();
+                },
+                _ => {
+                    self.inbuf.push(buf[i] as char);
+                },
             }
         }
 
@@ -222,11 +185,6 @@ fn main() {
     event_loop.register(&sock, STDIN,
         EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
 
-    // register foonetic
-    let foo_irc = connect("irc.foonetic.net", 6667);
-    event_loop.register(&foo_irc, FREENODE,
-        EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
-
     // register freenode
     let free_irc = connect("irc.sushigirl.tokyo", 6667);
     event_loop.register(&free_irc, FOONETIC,
@@ -234,14 +192,9 @@ fn main() {
 
     // Start handling events
     let mut handler = Client { pipe: sock, //foon: irc,
-                               inbuf: String::new(), //outbuf: String::new(),
-                               //scroll: VecDeque::new(),
-                               current_conn: 0,
-                               connections: vec![
-                                   (free_irc, VecDeque::new(), String::new()),
-                                   (foo_irc, VecDeque::new(), String::new()),
-                               ],
-                               on_ctl: false, ctl_scroll: VecDeque::new() };
+                               inbuf: String::new(), outbuf: String::new(),
+                               connection: free_irc,
+                               scroll: VecDeque::new(), };
 
     event_loop.run(&mut handler).unwrap();
 
