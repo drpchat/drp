@@ -1,5 +1,4 @@
 #![feature(lookup_host)]
-#![feature(ip_addr)]
 
 extern crate ncurses;
 extern crate mio;
