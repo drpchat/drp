@@ -92,9 +92,9 @@ impl Server {
                         EventSet::all(), PollOpt::empty()).unwrap();
                 }
 
-                for c in recv_buf.flip().chars() {
-                    print!("{}", c.unwrap());
-                }
+                let v: Vec<u8> = recv_buf.flip().bytes()
+                    .map(|b| b.unwrap()).collect();
+                println!("{:?}", v);
             },
             Ok(None) => (), // EAGAIN
             Err(_) => {
