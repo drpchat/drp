@@ -8,7 +8,7 @@ use mio::*;
 use mio::tcp::{TcpListener, TcpStream};
 use mio::util::Slab;
 
-use bytes::ByteBuf;
+use bytes::{ByteBuf, MutBuf};
 
 use std::io::{Read, Write};
 use std::net::SocketAddr;
@@ -41,7 +41,7 @@ impl Server {
     fn new() -> Server {
         Server {
             token: Token(1),
-            sock: TcpListener::bind(&FromStr::from_str("127.0.0.1:8765").unwrap()).unwrap(),
+            sock: TcpListener::bind(&FromStr::from_str("0.0.0.0:8765").unwrap()).unwrap(),
             conns: Slab::new_starting_at(Token(2), 128),
         }
     }
@@ -67,7 +67,7 @@ impl Server {
             Some(token) => {
                 // register the guy
                 event_loop.register(&self.conns[token].sock, token,
-                    EventSet::all(),
+                    EventSet::readable(),
                     PollOpt::empty()).unwrap();
             },
             None => {
@@ -79,8 +79,12 @@ impl Server {
     fn forward(&mut self, event_loop: &mut EventLoop<Server>, token: Token) {
         // give it to the guy
         let mut recv_buf = ByteBuf::mut_with_capacity(2048);
+
         match self.conns[token].sock.try_read_buf(&mut recv_buf) {
             Ok(Some(_)) => {
+                // don't forward empty shit
+                if recv_buf.remaining() == recv_buf.capacity() { return; }
+
                 for conn in self.conns.iter_mut() {
                     conn.messages.push(
                         ByteBuf::from_slice(recv_buf.bytes()));
@@ -134,7 +138,7 @@ impl Handler for Server {
 
         if events.is_writable() {
             assert!(token != self.token);
-            
+
             self.conns[token].messages.pop().and_then(|mut msg| {
                 self.conns[token].sock.try_write_buf(&mut msg).unwrap()
             });
@@ -146,7 +150,6 @@ impl Handler for Server {
         }
 
         if events.is_readable() {
-            println!("we got a read!");
             if token == self.token {
                 self.accept(event_loop);
             } else {
