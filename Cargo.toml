@@ -1,7 +1,7 @@
 [package]
 name = "drp"
 version = "0.1.0"
-authors = ["Lily Houghton <lily.anachrome@gmail.com>"]
+authors = ["Lily Houghton <lily.anachrome@gmail.com>", "AJ Trainor <lhk@lhk.me>"]
 build = "build.rs"
 
 [[bin]]
