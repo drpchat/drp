@@ -2,7 +2,22 @@
 
 extern crate ncurses;
 extern crate mio;
+extern crate bytes;
 extern crate nix;
+
+extern crate capnp;
+extern crate capnpc;
+extern crate capnp_nonblock;
+
+mod drp_capnp {
+    include!("drp_capnp.rs");
+}
+
+use drp_capnp::message;
+
+use capnp::serialize_packed;
+use capnp::message::{Builder, ReaderOptions};
+use capnp_nonblock::MessageStream;
 
 use ncurses::*;
 
@@ -10,12 +25,41 @@ use mio::*;
 use mio::tcp::TcpStream;
 use mio::unix::PipeReader;
 
+use bytes::ByteBuf;
+
 use std::os::unix::io::FromRawFd;
-use std::io::{Read, Write};
+use std::io::{BufReader, BufRead, Read, Write};
 
 use std::net::{SocketAddr, lookup_host};
 
 use std::collections::VecDeque;
+use std::str::FromStr;
+
+// todo: use bytes instead of string
+#[derive(Debug)]
+struct Message {
+    source: String,
+    dest: String,
+    body: String,
+}
+
+fn read_message<R>(read: &mut R, options: ReaderOptions)
+    -> capnp::Result<Message> where R: BufRead {
+
+    serialize_packed::read_message(read, options).and_then(|r| {
+        r.get_root::<message::Reader>().and_then(|msg| {
+            let source = try!(msg.get_source());
+            let dest = try!(msg.get_dest());
+            let body = try!(msg.get_body());
+
+            Ok(Message {
+                source: String::from_str(source).unwrap(),
+                dest: String::from_str(dest).unwrap(),
+                body: String::from_str(body).unwrap(),
+            })
+        })
+    })
+}
 
 // Setup some tokens to allow us to identify which event is
 // for which socket.
@@ -36,6 +80,8 @@ fn draw_scroll(scroll: &VecDeque<String>) {
                 addch(*c as u64);
             }
         }
+
+        clrtoeol();
     }
 
     mv(LINES - 2, 0);
@@ -44,6 +90,7 @@ fn draw_scroll(scroll: &VecDeque<String>) {
     }
 
     mv(LINES - 1, 0);
+    refresh();
 }
 
 // Define a handler to process the events
@@ -51,7 +98,7 @@ struct Client {
     pipe: PipeReader,
     inbuf: String,
 
-    connection: TcpStream,
+    connection: MessageStream<TcpStream>,
     scroll: VecDeque<String>,
     outbuf: String,
 }
@@ -61,44 +108,72 @@ impl Handler for Client {
     type Message = ();
 
     fn ready(&mut self, event_loop: &mut EventLoop<Client>, token: Token, event: EventSet) {
-        match token {
-            STDIN => if event.is_hup() {
+        if token == STDIN {
+            if event.is_hup() {
                 writeln!(std::io::stderr(), "stdin hup").unwrap();
                 event_loop.shutdown();
+                return;
             } else if event.is_error() {
                 writeln!(std::io::stderr(), "stdin error").unwrap();
                 event_loop.shutdown();
-            } else if event.is_readable() {
+                return;
+            }
+
+            if event.is_readable() {
                 let mut buf = vec![0; 512];
 
                 match self.pipe.read(&mut buf) {
-                    Ok(n) => self.handle_stdin(&buf, n),
+                    Ok(n) => self.handle_stdin(&buf, n, event_loop),
 
                     Err(bad) => {
                         writeln!(std::io::stderr(), "bad a! {}", bad).unwrap();
                         event_loop.shutdown();
                     },
                 }
-            },
-
-            Token(_) => if event.is_hup() {
+            }
+        } else {
+            if event.is_hup() {
                 writeln!(std::io::stderr(), "net hup").unwrap();
                 event_loop.shutdown();
+                return;
             } else if event.is_error() {
                 writeln!(std::io::stderr(), "net error").unwrap();
                 event_loop.shutdown();
-            } else if event.is_readable() {
-                let mut buf = vec![0; 512];
+                return;
+            }
+            
+            if event.is_readable() {
+                let mut buf = ByteBuf::mut_with_capacity(2048);
 
-                match self.connection.read(&mut buf) {
-                    Ok(n) => self.handle_netin(&buf, n),
+                match self.connection.read_message() {
+                    Ok(Some(r)) => {
+                        let msg = r.get_root::<message::Reader>().unwrap();
 
-                    Err(bad) => {
-                        writeln!(std::io::stderr(), "bad b! {}", bad).unwrap();
-                        event_loop.shutdown();
+                        let source = msg.get_source().unwrap();
+                        let dest = msg.get_dest().unwrap();
+                        let body = msg.get_body().unwrap();
+
+                        self.scroll.push_front(format!("{} -> {}: {}",
+                            source, dest, body));
+
+                        draw_scroll(&self.scroll);
                     },
+                    Ok(None) => {
+                        (); // still  wait tin
+                    },
+                    Err(e) => {
+                        panic!("FUCK");
+                    }
                 }
-            },
+            }
+
+            if event.is_writable() {
+                self.connection.write().unwrap();
+                if self.connection.outbound_queue_len() == 0 {
+                    event_loop.reregister(self.connection.inner(), FOONETIC,
+                        EventSet::readable(), PollOpt::empty()).unwrap();
+                }
+            }
         }
     }
 }
@@ -116,17 +191,17 @@ impl Client {
                 self.scroll.push_front(temp);
                 self.outbuf.clear();
             } else {
-                self.outbuf.push(buf[i] as char);
+                self.outbuf.push(((buf[i] & 0xf0 >> 4) + 97) as char);
+                self.outbuf.push((buf[i] & 0x0f + 97) as char);
             }
         }
 
         clear();
         draw_scroll(&self.scroll);
-        refresh();
     }
 
     // len is the amount of the buffer we actually filled up
-    fn handle_stdin(&mut self, buf: &Vec<u8>, len: usize) {
+    fn handle_stdin(&mut self, buf: &Vec<u8>, len: usize, event_loop: &mut EventLoop<Client>) {
         for i in 0..len {
             writeln!(std::io::stderr(), "key: {:?}", buf[i]).unwrap();
             match buf[i] as char {
@@ -135,11 +210,26 @@ impl Client {
                     clear();
                     draw_scroll(&self.scroll);
 
-                    self.inbuf.push_str("\r\n");
-                    match self.connection.write_all(self.inbuf.as_bytes()) {
-                        Ok(_) => (),
-                        Err(bad) => println!("bad d! {:?}", bad),
+                    //self.inbuf.push_str("\r\n");
+
+                    let mut data = Builder::new_default();
+                    {
+                        let mut msg = data.init_root::<message::Builder>();
+
+                        msg.set_source("[Awark");
+                        msg.set_dest("Lan");
+                        msg.set_body(&self.inbuf);
                     }
+
+                    self.connection.write_message(data).unwrap();
+
+                    event_loop.reregister(self.connection.inner(), FOONETIC,
+                        EventSet::all(), PollOpt::empty()).unwrap();
+
+                    //match self.connection.write_all(self.inbuf.as_bytes()) {
+                    //    Ok(_) => (),
+                    //    Err(bad) => println!("bad d! {:?}", bad),
+                    //}
 
                     self.inbuf.clear();
                 },
@@ -186,8 +276,11 @@ fn main() {
         EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
 
     // register freenode
-    let free_irc = connect("irc.sushigirl.tokyo", 6667);
-    event_loop.register(&free_irc, FOONETIC,
+    let free_irc = connect("127.0.0.1", 8765);
+
+    let free_irc = MessageStream::new(free_irc, ReaderOptions::default());
+
+    event_loop.register(free_irc.inner(), FOONETIC,
         EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
 
     // Start handling events
@@ -196,6 +289,9 @@ fn main() {
                                connection: free_irc,
                                scroll: VecDeque::new(), };
 
+    draw_scroll(&handler.scroll);
+
+    writeln!(std::io::stderr(), "bluhhhhhhhhhhhh").unwrap();
     event_loop.run(&mut handler).unwrap();
 
     // more ncurses bullshit
