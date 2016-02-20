@@ -6,11 +6,10 @@ extern crate bytes;
 extern crate nix;
 
 extern crate capnp;
-extern crate capnpc;
 extern crate capnp_nonblock;
 
 mod drp_capnp {
-    include!("drp_capnp.rs");
+    include!(concat!(env!("OUT_DIR"), "/drp_capnp.rs"));
 }
 
 use drp_capnp::message;

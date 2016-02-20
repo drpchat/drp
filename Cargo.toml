@@ -1,0 +1,24 @@
+[package]
+name = "drp"
+version = "0.1.0"
+authors = ["Lily Houghton <lily.anachrome@gmail.com>"]
+build = "build.rs"
+
+[[bin]]
+name = "server"
+path = "src/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"
+
+[build-dependencies]
+capnpc = "*"
+
+[dependencies]
+ncurses = "*"
+mio = "*"
+bytes = "*"
+nix = "*"
+capnp = "*"
+capnp-nonblock = "*"
