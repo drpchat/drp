@@ -6,5 +6,8 @@ authors = ["Lily Houghton <lily.anachrome@gmail.com> AJ Trainor <lhk@lhk.me>"]
 [dependencies]
 ncurses = "*"
 mio = "*"
+bytes = "*"
 nix = "*"
 capnp = "*"
+capnpc = "*"
+capnp-nonblock = "*"
