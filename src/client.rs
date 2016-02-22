@@ -1,4 +1,5 @@
 #![feature(lookup_host)]
+#![feature(io)]
 
 extern crate ncurses;
 extern crate mio;
@@ -8,13 +9,13 @@ extern crate nix;
 extern crate capnp;
 extern crate capnp_nonblock;
 
-mod drp_capnp {
+// public to prevent 'unused X' warnings
+pub mod drp_capnp {
     include!(concat!(env!("OUT_DIR"), "/drp_capnp.rs"));
 }
 
 use drp_capnp::message;
 
-use capnp::serialize_packed;
 use capnp::message::{Builder, ReaderOptions};
 use capnp_nonblock::MessageStream;
 
@@ -24,15 +25,13 @@ use mio::*;
 use mio::tcp::TcpStream;
 use mio::unix::PipeReader;
 
-use bytes::ByteBuf;
-
 use std::os::unix::io::FromRawFd;
-use std::io::{BufReader, BufRead, Read, Write};
+use std::io::{Read, Write};
 
 use std::net::{SocketAddr, lookup_host};
 
 use std::collections::VecDeque;
-use std::str::FromStr;
+use std::str::{from_utf8};
 
 // todo: use bytes instead of string
 #[derive(Debug)]
@@ -42,37 +41,40 @@ struct Message {
     body: String,
 }
 
-fn read_message<R>(read: &mut R, options: ReaderOptions)
-    -> capnp::Result<Message> where R: BufRead {
+static NICK: &'static [u8] = b"anachrome";
 
-    serialize_packed::read_message(read, options).and_then(|r| {
-        r.get_root::<message::Reader>().and_then(|msg| {
-            let source = try!(msg.get_source());
-            let dest = try!(msg.get_dest());
-            let body = try!(msg.get_body());
-
-            Ok(Message {
-                source: String::from_str(source).unwrap(),
-                dest: String::from_str(dest).unwrap(),
-                body: String::from_str(body).unwrap(),
-            })
-        })
-    })
-}
+//fn read_message<R>(read: &mut R, options: ReaderOptions)
+//    -> capnp::Result<Message> where R: BufRead {
+//
+//    serialize_packed::read_message(read, options).and_then(|r| {
+//        r.get_root::<message::Reader>().and_then(|msg| {
+//            let source = try!(msg.get_source());
+//            let dest = try!(msg.get_dest());
+//            let body = try!(msg.get_body());
+//
+//            Ok(Message {
+//                source: String::from_str(source).unwrap(),
+//                dest: String::from_str(dest).unwrap(),
+//                body: String::from_str(body).unwrap(),
+//            })
+//        })
+//    })
+//}
 
 // Setup some tokens to allow us to identify which event is
 // for which socket.
 const STDIN: Token = Token(0);
 const FOONETIC: Token = Token(2);
 
-fn draw_scroll(scroll: &VecDeque<String>) {
+fn draw_scroll(scroll: &VecDeque<Vec<u8>>) {
     let mut i = LINES - 2;
     for line in scroll.iter() {
         i -= line.len() as i32 / COLS + 1;
 
         if i < 0 { break }
 
-        for (j, line) in line.chars().collect::<Vec<char>>()
+        for (j, line) in line.chars().map(|x| x.unwrap())
+                                     .collect::<Vec<char>>()
                                      .chunks(COLS as usize).enumerate() {
             mv(i + j as i32, 0);
             for c in line {
@@ -95,11 +97,11 @@ fn draw_scroll(scroll: &VecDeque<String>) {
 // Define a handler to process the events
 struct Client {
     pipe: PipeReader,
-    inbuf: String,
+    inbuf: Vec<u8>,
 
     connection: MessageStream<TcpStream>,
-    scroll: VecDeque<String>,
-    outbuf: String,
+    scroll: VecDeque<Vec<u8>>,
+    outbuf: Vec<u8>,
 }
 
 impl Handler for Client {
@@ -142,31 +144,42 @@ impl Handler for Client {
             }
             
             if event.is_readable() {
-                let mut buf = ByteBuf::mut_with_capacity(2048);
-
                 match self.connection.read_message() {
                     Ok(Some(r)) => {
+                        writeln!(std::io::stderr(), "READ DESU").unwrap();
                         let msg = r.get_root::<message::Reader>().unwrap();
+                        
+                        if let Ok(message::Relay(m)) = msg.which() {
+                            let mut v = Vec::new();
+                            v.extend_from_slice(m.get_body().unwrap());
+                            self.scroll.push_front(v);
 
-                        let source = msg.get_source().unwrap();
-                        let dest = msg.get_dest().unwrap();
-                        let body = msg.get_body().unwrap();
+                            draw_scroll(&self.scroll);
+                        } else {
+                            panic!("baaad girrl");
+                        }
 
-                        self.scroll.push_front(format!("{} -> {}: {}",
-                            source, dest, body));
+                        //let msg = r.get_root::<message::Reader>().unwrap();
 
-                        draw_scroll(&self.scroll);
+                        //let source = msg.get_source().unwrap();
+                        //let dest = msg.get_dest().unwrap();
+                        //let body = msg.get_body().unwrap();
+
+                        //self.scroll.push_front(format!("{} -> {}: {}",
+                        //    source, dest, body));
                     },
                     Ok(None) => {
+                        writeln!(std::io::stderr(), "not really :(").unwrap();
                         (); // still  wait tin
                     },
                     Err(e) => {
-                        panic!("FUCK");
+                        panic!("FUCK ({})", e);
                     }
                 }
             }
 
             if event.is_writable() {
+                writeln!(std::io::stderr(), "gotta write fast").unwrap();
                 self.connection.write().unwrap();
                 if self.connection.outbound_queue_len() == 0 {
                     event_loop.reregister(self.connection.inner(), FOONETIC,
@@ -179,32 +192,11 @@ impl Handler for Client {
 
 impl Client {
     // len is the amount of the buffer we actually filled up
-    fn handle_netin(&mut self, buf: &Vec<u8>, len: usize) {
-        for i in 0..len {
-            if buf[i] as char == '\n' { continue }
-
-            if buf[i] as char == '\r' {
-                let temp = self.outbuf.clone();
-                writeln!(std::io::stderr(), "{}", temp).unwrap();
-
-                self.scroll.push_front(temp);
-                self.outbuf.clear();
-            } else {
-                self.outbuf.push(((buf[i] & 0xf0 >> 4) + 97) as char);
-                self.outbuf.push((buf[i] & 0x0f + 97) as char);
-            }
-        }
-
-        clear();
-        draw_scroll(&self.scroll);
-    }
-
-    // len is the amount of the buffer we actually filled up
     fn handle_stdin(&mut self, buf: &Vec<u8>, len: usize, event_loop: &mut EventLoop<Client>) {
         for i in 0..len {
             writeln!(std::io::stderr(), "key: {:?}", buf[i]).unwrap();
-            match buf[i] as char {
-                '\r' => { // this is what return does ?
+            match buf[i] {
+                b'\r' => { // this is what return does ?
                     self.scroll.push_front(self.inbuf.clone());
                     clear();
                     draw_scroll(&self.scroll);
@@ -213,11 +205,11 @@ impl Client {
 
                     let mut data = Builder::new_default();
                     {
-                        let mut msg = data.init_root::<message::Builder>();
+                        let msg = data.init_root::<message::Builder>();
+                        let mut mm = msg.init_send();
 
-                        msg.set_source("[Awark");
-                        msg.set_dest("Lan");
-                        msg.set_body(&self.inbuf);
+                        mm.set_dest(b"recept");
+                        mm.set_body(&self.inbuf);
                     }
 
                     self.connection.write_message(data).unwrap();
@@ -232,11 +224,11 @@ impl Client {
 
                     self.inbuf.clear();
                 },
-                '\x7f' => { // backspace is delete on linux :<
+                b'\x7f' => { // backspace is delete on linux :<
                     self.inbuf.pop();
                 },
                 _ => {
-                    self.inbuf.push(buf[i] as char);
+                    self.inbuf.push(buf[i]);
                 },
             }
         }
@@ -245,7 +237,7 @@ impl Client {
         for _ in self.inbuf.len()..COLS as usize {
             printw(" ");
         }
-        mvprintw(LINES - 1, 0, &self.inbuf);
+        mvprintw(LINES - 1, 0, from_utf8(self.inbuf.as_slice()).unwrap());
         refresh();
     }
 }
@@ -277,14 +269,20 @@ fn main() {
     // register freenode
     let free_irc = connect("127.0.0.1", 8765);
 
-    let free_irc = MessageStream::new(free_irc, ReaderOptions::default());
+    let mut free_irc = MessageStream::new(free_irc, ReaderOptions::default());
+
+    let mut data = Builder::new_default();
+    {
+        data.init_root::<message::register::Builder>().set_name(NICK);
+    }
+    free_irc.write_message(data).unwrap();
 
     event_loop.register(free_irc.inner(), FOONETIC,
-        EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
+        EventSet::all(), PollOpt::empty()).unwrap();
 
     // Start handling events
     let mut handler = Client { pipe: sock, //foon: irc,
-                               inbuf: String::new(), outbuf: String::new(),
+                               inbuf: Vec::new(), outbuf: Vec::new(),
                                connection: free_irc,
                                scroll: VecDeque::new(), };
 

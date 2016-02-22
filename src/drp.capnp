@@ -1,7 +1,20 @@
 @0xceb71d1333e035f1;
 
 struct Message {
-    source @0 :Text;
-    dest @1 :Text;
-    body @2 :Text;
+    union {
+        register :group {
+            name @0 :Data;
+        }
+
+        send :group {
+            dest @1 :Data;
+            body @2 :Data;
+        }
+
+        relay :group {
+            source @3 :Data;
+            dest @4 :Data;
+            body @5 :Data;
+        }
+    }
 }
