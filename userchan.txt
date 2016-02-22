@@ -1,0 +1,54 @@
+
+Channel/User Struct:
+=========================================================================
+|Chan Const | User Const.   |   Format      |   Notes
+|-----------|---------------|---------------|--------------------------
+|   Name    |   (user)Name  | 32 ascii's    | Human-readable pubkey representation
+|   Topic   |   Status      | ~80 Unicodes  | Possibly unified with Nicks?
+|   ???     |   Nick        | 32? Unicodes  | Possibly user-only? chan-specific?
+|   Key?    |   Pubkey      | lots of bits  | May have different format chan vs user
+|   /names  |   Friend list | list of users | May store chan-specific nick
+=========================================================================
+
+
+User Flags/Modes:
+=========================================================================
+|   Name    |   Description     |   Notes
+|-----------|-------------------|--------------------------------------
+|   Away    |   Marks user      |   Possibly scrapped for just set status
+|   Oper    |   Marks as net op |   Possibly just not needed
+| user=nick |   Shows nick=user |   Possibly a chan/user mode (depends on server nicks)
+=========================================================================
+
+
+Channel Flags/Modes/Types/States:     (Type here = prepend with special symbol)
+=========================================================================
+|   Name        |   Format  |   Description         |   Notes
+|---------------|-----------|-----------------------|------------------
+| Inv-only/Pub  |   Flag    | Defines who can join  | For users too?
+| (Un)listed    |   Flag    | Defines who can see   | For users too?
+| anonymous?    |   Type?   | Dont show nick or user| anon = userless + nickless?
+| userless      |   Flag    | Dont reveal users     |   ^
+| nickless      |   Flag    | Dont allow nicks      | Nick = username forall users
+| democracy     |   Type?   | Vote-based moderation | possibly /vote system
+| anarchy       |   Type?   | Everyone is a mod     | what can they change?
+| twitch-plays  |   Type?   | Vote to change dem/an | twitch plays pokemon style
+| encrypted     |   Type?   | Encrypt channel msgs  | Is this a type or flag?
+| persistent    |nick thing?| Empty channel stays   | Is this just op nicks to #thing?
+| Quiet         |   Flag    | Unvoiced cant talk    | Relies on user modes
+| Loud          |   Flag    | Unhearing cant listen | ^
+=========================================================================
+
+
+Channel + User flags:       (These flags will likely be in the nicklist structure)
+=========================================================================
+|   Name        |   Format  |   Description         |   Notes
+|---------------|-----------|-----------------------|-------------------
+| Ban/Invite    | -b or -i  | Bans user or adds them to the nicklist (if inv-only)
+| Op/Hop        | ~/% nick  | Elevates user to allow chan flag modification
+| Mute          |   -m      | Cannot Speak          |
+| Voice         |   -v      | Can Speak             | quiet channels only?
+| Deaf          |   -d?     | Cannot Hear           |
+| Hearing?      |   -h?     | Can always Hear       | loud channels only?
+| User=nick     |   ?       | nick string = username| only if nick is channel specific
+=========================================================================
