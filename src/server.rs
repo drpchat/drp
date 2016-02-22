@@ -158,29 +158,6 @@ impl Server {
                 println!("{:?} (oh no)", e);
             }
         }
-
-        //match self.conns[token].sock.try_read_buf(&mut recv_buf) {
-        //    Ok(Some(_)) => {
-        //        // don't forward empty shit
-        //        if recv_buf.remaining() == recv_buf.capacity() { return; }
-
-        //        for conn in self.conns.iter_mut() {
-        //            conn.messages.push(
-        //                ByteBuf::from_slice(recv_buf.bytes()));
-        //            event_loop.reregister(&mut conn.sock, conn.token,
-        //                EventSet::all(), PollOpt::empty()).unwrap();
-        //        }
-
-        //        let v: Vec<u8> = recv_buf.flip().bytes()
-        //            .map(|b| b.unwrap()).collect();
-        //        println!("{:?}", v);
-        //    },
-        //    Ok(None) => (), // EAGAIN
-        //    Err(_) => {
-        //        println!("error while reading");
-        //        self.conns.remove(token);
-        //    },
-        //}
     }
 }
 
@@ -225,15 +202,6 @@ impl Handler for Server {
                 event_loop.reregister(self.conns[token].sock.inner(), token,
                     EventSet::readable(), PollOpt::empty()).unwrap();
             }
-
-            //self.conns[token].messages.pop().and_then(|mut msg| {
-            //    self.conns[token].sock.try_write_buf(&mut msg).unwrap()
-            //});
-
-            //if self.conns[token].messages.is_empty() {
-            //    event_loop.reregister(&mut self.conns[token].sock, token,
-            //        EventSet::readable(), PollOpt::empty()).unwrap();
-            //}
         }
 
         if events.is_readable() {

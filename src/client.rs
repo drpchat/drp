@@ -43,24 +43,6 @@ struct Message {
 
 static NICK: &'static [u8] = b"anachrome";
 
-//fn read_message<R>(read: &mut R, options: ReaderOptions)
-//    -> capnp::Result<Message> where R: BufRead {
-//
-//    serialize_packed::read_message(read, options).and_then(|r| {
-//        r.get_root::<message::Reader>().and_then(|msg| {
-//            let source = try!(msg.get_source());
-//            let dest = try!(msg.get_dest());
-//            let body = try!(msg.get_body());
-//
-//            Ok(Message {
-//                source: String::from_str(source).unwrap(),
-//                dest: String::from_str(dest).unwrap(),
-//                body: String::from_str(body).unwrap(),
-//            })
-//        })
-//    })
-//}
-
 // Setup some tokens to allow us to identify which event is
 // for which socket.
 const STDIN: Token = Token(0);
@@ -158,15 +140,6 @@ impl Handler for Client {
                         } else {
                             panic!("baaad girrl");
                         }
-
-                        //let msg = r.get_root::<message::Reader>().unwrap();
-
-                        //let source = msg.get_source().unwrap();
-                        //let dest = msg.get_dest().unwrap();
-                        //let body = msg.get_body().unwrap();
-
-                        //self.scroll.push_front(format!("{} -> {}: {}",
-                        //    source, dest, body));
                     },
                     Ok(None) => {
                         writeln!(std::io::stderr(), "not really :(").unwrap();
@@ -201,8 +174,6 @@ impl Client {
                     clear();
                     draw_scroll(&self.scroll);
 
-                    //self.inbuf.push_str("\r\n");
-
                     let mut data = Builder::new_default();
                     {
                         let msg = data.init_root::<message::Builder>();
@@ -216,11 +187,6 @@ impl Client {
 
                     event_loop.reregister(self.connection.inner(), FOONETIC,
                         EventSet::all(), PollOpt::empty()).unwrap();
-
-                    //match self.connection.write_all(self.inbuf.as_bytes()) {
-                    //    Ok(_) => (),
-                    //    Err(bad) => println!("bad d! {:?}", bad),
-                    //}
 
                     self.inbuf.clear();
                 },
