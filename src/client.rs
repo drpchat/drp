@@ -16,7 +16,7 @@ pub mod drp_capnp {
 
 use drp_capnp::message;
 
-use capnp::message::{Builder, ReaderOptions};
+use capnp::message::{Reader, ReaderSegments, Builder, ReaderOptions};
 use capnp_nonblock::MessageStream;
 
 use ncurses::*;
@@ -35,10 +35,10 @@ use std::str::{from_utf8};
 
 // todo: use bytes instead of string
 #[derive(Debug)]
-struct Message {
-    source: String,
-    dest: String,
-    body: String,
+enum Message {
+    Register { name: Vec<u8> },
+    Send { dest: Vec<u8>, body: Vec<u8> },
+    Relay { source: Vec<u8>, dest: Vec<u8>, body: Vec<u8>, },
 }
 
 static NICK: &'static [u8] = b"anachrome";
@@ -126,34 +126,19 @@ impl Handler for Client {
             }
             
             if event.is_readable() {
-                match self.connection.read_message() {
-                    Ok(Some(r)) => {
-                        writeln!(std::io::stderr(), "READ DESU").unwrap();
-                        let msg = r.get_root::<message::Reader>().unwrap();
-                        
-                        if let Ok(message::Relay(m)) = msg.which() {
-                            let mut v = Vec::new();
-                            v.extend_from_slice(m.get_body().unwrap());
-                            self.scroll.push_front(v);
+                if let Some(r) = self.connection.read_message()
+                    .unwrap_or_else(|e| panic!("fuck ({})", e)) {
 
-                            draw_scroll(&self.scroll);
-                        } else {
-                            panic!("baaad girrl");
-                        }
-                    },
-                    Ok(None) => {
-                        writeln!(std::io::stderr(), "not really :(").unwrap();
-                        (); // still  wait tin
-                    },
-                    Err(e) => {
-                        panic!("FUCK ({})", e);
-                    }
+                    self.handle_netin(r);
+                } else {
+                    writeln!(std::io::stderr(), "not really :(").unwrap();
                 }
             }
 
             if event.is_writable() {
                 writeln!(std::io::stderr(), "gotta write fast").unwrap();
                 self.connection.write().unwrap();
+
                 if self.connection.outbound_queue_len() == 0 {
                     event_loop.reregister(self.connection.inner(), FOONETIC,
                         EventSet::readable(), PollOpt::empty()).unwrap();
@@ -164,6 +149,20 @@ impl Handler for Client {
 }
 
 impl Client {
+    fn handle_netin<S>(&mut self, r: Reader<S>) where S: ReaderSegments {
+        let msg = r.get_root::<message::Reader>().unwrap();
+
+        if let Ok(message::Relay(m)) = msg.which() {
+            let mut v = Vec::new();
+            v.extend_from_slice(m.get_body().unwrap());
+            self.scroll.push_front(v);
+
+            draw_scroll(&self.scroll);
+        } else {
+            panic!("baaad girrl");
+        }
+    }
+
     // len is the amount of the buffer we actually filled up
     fn handle_stdin(&mut self, buf: &Vec<u8>, len: usize, event_loop: &mut EventLoop<Client>) {
         for i in 0..len {
