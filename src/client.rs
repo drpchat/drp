@@ -9,15 +9,13 @@ extern crate nix;
 extern crate capnp;
 extern crate capnp_nonblock;
 
-// public to prevent 'unused X' warnings
-pub mod drp_capnp {
-    include!(concat!(env!("OUT_DIR"), "/drp_capnp.rs"));
-}
+extern crate drp;
 
-use drp_capnp::message;
-
-use capnp::message::{Reader, ReaderSegments, Builder, ReaderOptions};
+use capnp::message::{Reader, ReaderSegments, ReaderOptions};
 use capnp_nonblock::MessageStream;
+
+use drp::message;
+use drp::util::*;
 
 use ncurses::*;
 
@@ -32,14 +30,6 @@ use std::net::{SocketAddr, lookup_host};
 
 use std::collections::VecDeque;
 use std::str::{from_utf8};
-
-// todo: use bytes instead of string
-#[derive(Debug)]
-enum Message {
-    Register { name: Vec<u8> },
-    Send { dest: Vec<u8>, body: Vec<u8> },
-    Relay { source: Vec<u8>, dest: Vec<u8>, body: Vec<u8>, },
-}
 
 static NICK: &'static [u8] = b"anachrome";
 
@@ -173,15 +163,7 @@ impl Client {
                     clear();
                     draw_scroll(&self.scroll);
 
-                    let mut data = Builder::new_default();
-                    {
-                        let msg = data.init_root::<message::Builder>();
-                        let mut mm = msg.init_send();
-
-                        mm.set_dest(b"recept");
-                        mm.set_body(&self.inbuf);
-                    }
-
+                    let data = serialize_send(b"recept", &self.inbuf);
                     self.connection.write_message(data).unwrap();
 
                     event_loop.reregister(self.connection.inner(), FOONETIC,
@@ -236,10 +218,7 @@ fn main() {
 
     let mut free_irc = MessageStream::new(free_irc, ReaderOptions::default());
 
-    let mut data = Builder::new_default();
-    {
-        data.init_root::<message::register::Builder>().set_name(NICK);
-    }
+    let data = serialize_register(NICK);
     free_irc.write_message(data).unwrap();
 
     event_loop.register(free_irc.inner(), FOONETIC,

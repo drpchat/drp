@@ -5,21 +5,19 @@ extern crate nix;
 extern crate capnp;
 extern crate capnp_nonblock;
 
+extern crate drp;
+
 use mio::*;
 use mio::tcp::{TcpListener, TcpStream};
 use mio::util::Slab;
 
 use std::str::FromStr;
 
-use capnp::message::{Builder, ReaderOptions};
+use capnp::message::{ReaderOptions};
 use capnp_nonblock::MessageStream;
 
-// public to prevent 'unused X' warnings
-pub mod drp_capnp {
-    include!(concat!(env!("OUT_DIR"), "/drp_capnp.rs"));
-}
-
-use drp_capnp::message;
+use drp::message;
+use drp::util::*;
 
 fn main() {
     // Create an event loop
@@ -110,35 +108,21 @@ impl Server {
                         };
 
                         for conn in self.conns.iter_mut() {
-                            let mut data = Builder::new_default();
-                            {
-                                let msg = data.init_root::<message::Builder>();
-                                let mut msg = msg.init_relay();
-
-                                msg.set_source(name.as_slice());
-                                msg.set_dest(m.get_dest().unwrap());
-                                msg.set_body(m.get_body().unwrap());
-                            }
+                            let data = serialize_relay(name.as_slice(),
+                                m.get_dest().unwrap(),
+                                m.get_body().unwrap());
 
                             conn.sock.write_message(data).unwrap();
                             event_loop.reregister(conn.sock.inner(), token,
-                                EventSet::all(),
-                                PollOpt::empty()).unwrap();
+                                EventSet::all(), PollOpt::empty()).unwrap();
 
                             println!("DID: write to a conn");
                         }
                     },
                     Ok(message::Relay(m)) => {
                         for conn in self.conns.iter_mut() {
-                            let mut data = Builder::new_default();
-                            {
-                                let msg = data.init_root::<message::Builder>();
-                                let mut msg = msg.init_relay();
-
-                                msg.set_source(m.get_source().unwrap());
-                                msg.set_dest(m.get_dest().unwrap());
-                                msg.set_body(m.get_body().unwrap());
-                            }
+                            let data = serialize_relay(m.get_source().unwrap(),
+                                m.get_dest().unwrap(), m.get_body().unwrap());
 
                             conn.sock.write_message(data).unwrap();
                             event_loop.reregister(conn.sock.inner(), token,
