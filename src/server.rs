@@ -86,61 +86,56 @@ impl Server {
 
     fn forward(&mut self, event_loop: &mut EventLoop<Server>, token: Token) {
         // give it to the guy
-        match self.conns[token].sock.read_message() {
-            Ok(Some(r)) => {
-                let msg = r.get_root::<message::Reader>().unwrap();
-                println!("got a msg");
+        if let Some(r) = self.conns[token].sock.read_message()
+            .unwrap_or_else(|e| { println!("{:?} (oh no)", e); None }) {
 
-                match msg.which() {
-                    Ok(message::Register(m)) => {
-                        self.conns[token].name = {
-                            let mut v = Vec::new();
-                            v.extend_from_slice(m.get_name().unwrap());
-                            Some(v)
-                        };
+            let msg = r.get_root::<message::Reader>().unwrap();
+            println!("got a msg");
 
-                        println!("DID: register {:?}", self.conns[token].name);
-                    },
-                    Ok(message::Send(m)) => {
-                        let name = {
-                            let ref name = self.conns[token].name;
-                            name.as_ref().unwrap().clone()
-                        };
+            match msg.which() {
+                Ok(message::Register(m)) => {
+                    self.conns[token].name = {
+                        let mut v = Vec::new();
+                        v.extend_from_slice(m.get_name().unwrap());
+                        Some(v)
+                    };
 
-                        for conn in self.conns.iter_mut() {
-                            let data = serialize_relay(name.as_slice(),
-                                m.get_dest().unwrap(),
-                                m.get_body().unwrap());
+                    println!("DID: register {:?}", self.conns[token].name);
+                },
+                Ok(message::Send(m)) => {
+                    let name = {
+                        let ref name = self.conns[token].name;
+                        name.as_ref().unwrap().clone()
+                    };
 
-                            conn.sock.write_message(data).unwrap();
-                            event_loop.reregister(conn.sock.inner(), token,
-                                EventSet::all(), PollOpt::empty()).unwrap();
+                    for conn in self.conns.iter_mut() {
+                        let data = serialize_relay(name.as_slice(),
+                            m.get_dest().unwrap(),
+                            m.get_body().unwrap());
 
-                            println!("DID: write to a conn");
-                        }
-                    },
-                    Ok(message::Relay(m)) => {
-                        for conn in self.conns.iter_mut() {
-                            let data = serialize_relay(m.get_source().unwrap(),
-                                m.get_dest().unwrap(), m.get_body().unwrap());
+                        conn.sock.write_message(data).unwrap();
+                        event_loop.reregister(conn.sock.inner(), token,
+                            EventSet::all(), PollOpt::empty()).unwrap();
 
-                            conn.sock.write_message(data).unwrap();
-                            event_loop.reregister(conn.sock.inner(), token,
-                                EventSet::all(),
-                                PollOpt::empty()).unwrap();
-                            println!("DID: write to a conn");
-                        }
-                    },
-                    Err(e) => println!("fail in ford: {:?}", e),
-                }
-            },
-            Ok(None) => {
-                println!("nope, let's go");
-                // waiting and shit
+                        println!("DID: write to a conn");
+                    }
+                },
+                Ok(message::Relay(m)) => {
+                    for conn in self.conns.iter_mut() {
+                        let data = serialize_relay(m.get_source().unwrap(),
+                            m.get_dest().unwrap(), m.get_body().unwrap());
+
+                        conn.sock.write_message(data).unwrap();
+                        event_loop.reregister(conn.sock.inner(), token,
+                            EventSet::all(),
+                            PollOpt::empty()).unwrap();
+                        println!("DID: write to a conn");
+                    }
+                },
+                Err(e) => println!("fail in ford: {:?}", e),
             }
-            Err(e) => {
-                println!("{:?} (oh no)", e);
-            }
+        } else {
+            println!("nope, let's go");
         }
     }
 }
