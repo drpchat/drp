@@ -31,7 +31,7 @@ use std::net::{SocketAddr, lookup_host};
 use std::collections::VecDeque;
 use std::str::{from_utf8};
 
-static NICK: &'static [u8] = b"anachrome";
+use std::env;
 
 // Setup some tokens to allow us to identify which event is
 // for which socket.
@@ -163,7 +163,16 @@ impl Client {
                     clear();
                     draw_scroll(&self.scroll);
 
-                    let data = serialize_send(b"recept", &self.inbuf);
+                    let guys = self.inbuf.clone();
+                    let guys: Vec<&[u8]> = guys.splitn(3, |x| *x == 32).collect();
+
+                    let recept = guys[0];
+                    //writeln!(std::io::stderr(), "recept: {:?}", recept).unwrap();
+                    println!("recept: {:?}", recept);
+
+                    let body = guys[1];
+
+                    let data = serialize_send(recept, body);
                     self.connection.write_message(data).unwrap();
 
                     event_loop.reregister(self.connection.inner(), FOONETIC,
@@ -200,6 +209,8 @@ fn connect(host: &str, port: u16) -> TcpStream {
 }
 
 fn main() {
+    let nick = env::args().nth(1).unwrap();
+
     // ncurses bullshit
     initscr();
     cbreak();
@@ -218,7 +229,7 @@ fn main() {
 
     let mut free_irc = MessageStream::new(free_irc, ReaderOptions::default());
 
-    let data = serialize_register(NICK);
+    let data = serialize_register(nick.into_bytes().as_slice());
     free_irc.write_message(data).unwrap();
 
     event_loop.register(free_irc.inner(), FOONETIC,

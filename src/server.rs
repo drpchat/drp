@@ -12,6 +12,7 @@ use mio::tcp::{TcpListener, TcpStream};
 use mio::util::Slab;
 
 use std::str::FromStr;
+use std::collections::HashMap;
 
 use capnp::message::{ReaderOptions};
 use capnp_nonblock::MessageStream;
@@ -33,6 +34,8 @@ struct Server {
     token: Token,
     sock: TcpListener,
     conns: Slab<Connection>,
+
+    names: HashMap<Vec<u8>, Token>,
 }
 
 struct Connection {
@@ -48,6 +51,7 @@ impl Server {
             token: Token(1),
             sock: TcpListener::bind(&FromStr::from_str("0.0.0.0:8765").unwrap()).unwrap(),
             conns: Slab::new_starting_at(Token(2), 128),
+            names: HashMap::new(),
         }
     }
 
@@ -94,13 +98,14 @@ impl Server {
 
             match msg.which() {
                 Ok(message::Register(m)) => {
-                    self.conns[token].name = {
+                    let mut conn = &mut self.conns[token];
+                    conn.name = {
                         let mut v = Vec::new();
                         v.extend_from_slice(m.get_name().unwrap());
                         Some(v)
                     };
 
-                    println!("DID: register {:?}", self.conns[token].name);
+                    self.names.insert(conn.name.clone().unwrap(), token);
                 },
                 Ok(message::Send(m)) => {
                     let name = {
@@ -108,29 +113,32 @@ impl Server {
                         name.as_ref().unwrap().clone()
                     };
 
-                    for conn in self.conns.iter_mut() {
-                        let data = serialize_relay(name.as_slice(),
-                            m.get_dest().unwrap(),
-                            m.get_body().unwrap());
+                    let dest = m.get_dest().unwrap();
+                    println!("dest: {:?}", dest);
+                    let token = *self.names.get(dest)
+                        .expect("couldn't resolve dest");
+                    let data = serialize_relay(name.as_slice(),
+                        m.get_dest().unwrap(),
+                        m.get_body().unwrap());
 
-                        conn.sock.write_message(data).unwrap();
-                        event_loop.reregister(conn.sock.inner(), token,
-                            EventSet::all(), PollOpt::empty()).unwrap();
-
-                        println!("DID: write to a conn");
-                    }
+                    self.conns[token].sock.write_message(data).unwrap();
+                    event_loop.reregister(self.conns[token].sock.inner(), token,
+                        EventSet::all(), PollOpt::empty()).unwrap();
                 },
                 Ok(message::Relay(m)) => {
-                    for conn in self.conns.iter_mut() {
-                        let data = serialize_relay(m.get_source().unwrap(),
-                            m.get_dest().unwrap(), m.get_body().unwrap());
+                    let name = {
+                        let name = &self.conns[token].name;
+                        name.as_ref().unwrap().clone()
+                    };
 
-                        conn.sock.write_message(data).unwrap();
-                        event_loop.reregister(conn.sock.inner(), token,
-                            EventSet::all(),
-                            PollOpt::empty()).unwrap();
-                        println!("DID: write to a conn");
-                    }
+                    let token = *self.names.get(m.get_dest().unwrap()).unwrap();
+                    let data = serialize_relay(m.get_source().unwrap(),
+                        m.get_dest().unwrap(), m.get_body().unwrap());
+
+                    let mut sock = &mut self.conns[token].sock;
+                    sock.write_message(data).unwrap();
+                    event_loop.reregister(sock.inner(), token,
+                        EventSet::all(), PollOpt::empty()).unwrap();
                 },
                 Err(e) => println!("fail in ford: {:?}", e),
             }
