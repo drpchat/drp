@@ -130,15 +130,15 @@ impl Client {
     // len is the amount of the buffer we actually filled up
     fn handle_stdin(&mut self, buf: &Vec<u8>, len: usize, event_loop: &mut EventLoop<Client>) {
         for i in 0..len {
-            writeln!(std::io::stderr(), "keypress: {:?}", buf[i]).unwrap();
+            //writeln!(std::io::stderr(), "keypress: {:?}", buf[i]).unwrap();
             match buf[i] {
                 b'\r' => { // this is what return does ?
                     let inputs = self.inbuf.clone();
                     let inputs: Vec<&[u8]> = inputs.splitn(3, |x| *x == 32).collect();
 
                     let target = inputs[0];
-                    //writeln!(std::io::stderr(), "Target: {:?}", target).unwrap();
-                    println!("Target: {:?}", target);
+                    writeln!(std::io::stderr(), "Target: {:?}", target).unwrap();
+                    //println!("Target: {:?}", target);
 
                     let body = inputs[1];
 
@@ -180,6 +180,7 @@ fn connect(host: &str, port: u16) -> TcpStream {
 
 fn main() {
     let nick = env::args().nth(1).unwrap();
+    let ip = env::args().nth(2).unwrap();
 
     // Create an event loop
     let mut event_loop = EventLoop::new().unwrap();
@@ -190,7 +191,8 @@ fn main() {
         EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
 
     // register and connect to server
-    let serv_conn = connect("www.outofthy.me", 8765);
+    // Outofthy.me: 104.131.118.79
+    let serv_conn = connect(&ip, 8765);
 
     let mut serv_conn = MessageStream::new(serv_conn, ReaderOptions::default());
 
