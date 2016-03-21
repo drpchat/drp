@@ -12,6 +12,10 @@ path = "src/server.rs"
 name = "client"
 path = "src/client.rs"
 
+[[bin]]
+name = "we"
+path = "src/we.rs"
+
 [build-dependencies]
 capnpc = "*"
 
