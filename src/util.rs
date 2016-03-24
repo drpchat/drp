@@ -12,6 +12,7 @@ pub enum Message<'a> {
     Relay { source: &'a [u8], dest: &'a [u8], body: &'a [u8], },
     Join { channel: &'a [u8] },
     Part { channel: &'a [u8] },
+    Response { body: &'a [u8] },
 }
 
 pub fn serialize<A>(msg: Message) -> Builder<HeapAllocator> {
@@ -26,6 +27,8 @@ pub fn serialize<A>(msg: Message) -> Builder<HeapAllocator> {
             serialize_join(channel),
         Message::Part { channel } =>
             serialize_part(channel),
+        Message::Response { body } =>
+            serialize_response(body),
     }
 }
 
@@ -82,6 +85,17 @@ pub fn serialize_part(channel: &[u8]) -> Builder<HeapAllocator> {
     data
 }
 
+pub fn serialize_response(body: &[u8]) -> Builder<HeapAllocator> {
+    let mut data = Builder::new_default();
+    {
+        let msg = data.init_root::<message::Builder>();
+        let mut mm = msg.init_response();
+
+        mm.set_body(body);
+    }
+    data
+}
+
 pub fn deserialize<'a, S>(msg: &'a Reader<S>) -> Result<Message<'a>>
     where S: ReaderSegments {
 
@@ -94,6 +108,7 @@ pub fn deserialize<'a, S>(msg: &'a Reader<S>) -> Result<Message<'a>>
             message::Relay(msg) => deserialize_relay(msg),
             message::Join(msg) => deserialize_join(msg),
             message::Part(msg) => deserialize_part(msg),
+            message::Response(msg) => deserialize_response(msg),
         },
         Err(e) => Err(Error::from(e)),
     }
@@ -133,4 +148,9 @@ pub fn deserialize_join<'a>(msg: message::join::Reader<'a>)
 pub fn deserialize_part<'a>(msg: message::part::Reader<'a>)
     -> Result<Message<'a>> {
     Ok(Message::Part { channel: try!(msg.get_channel()) })
+}
+
+pub fn deserialize_response<'a>(msg: message::response::Reader<'a>)
+    -> Result<Message<'a>> {
+    Ok(Message::Response { body: try!(msg.get_body()) })
 }

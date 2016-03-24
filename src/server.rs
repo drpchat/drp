@@ -14,7 +14,7 @@ use mio::util::Slab;
 use std::str::FromStr;
 use std::collections::HashMap;
 
-use capnp::message::{ReaderOptions};
+use capnp::message::{Builder, HeapAllocator, ReaderOptions};
 use capnp_nonblock::MessageStream;
 
 use drp::util::*;
@@ -25,8 +25,30 @@ fn main() {
 
     let mut event_loop = EventLoop::new().unwrap();
 
-    event_loop.register(&handler.sock, handler.token, EventSet::readable() | EventSet::error() | EventSet::hup(), PollOpt::empty()).unwrap();
+    event_loop.register(&handler.sock, handler.token,
+        EventSet::readable() | EventSet::error() | EventSet::hup(),
+        PollOpt::empty()).unwrap();
     event_loop.run(&mut handler).unwrap();
+}
+
+struct Connection {
+    name: Option<Vec<u8>>,
+
+    sock: MessageStream<TcpStream>,
+    token: Token,
+    //interest: EventSet,
+}
+
+impl Connection {
+    // async write to our sock, then reregister for writable events.  the mio
+    // handler will unset the writable event once our message is actually sent
+    fn write_message(&mut self, event_loop: &mut EventLoop<Server>,
+        msg: Builder<HeapAllocator>) {
+
+        self.sock.write_message(msg).unwrap();
+        event_loop.reregister(self.sock.inner(), self.token,
+            EventSet::all(), PollOpt::empty()).unwrap();
+    }
 }
 
 struct Server {
@@ -36,13 +58,6 @@ struct Server {
 
     names: HashMap<Vec<u8>, Token>,
     channels: HashMap<Vec<u8>, Vec<Vec<u8>>>,
-}
-
-struct Connection {
-    name: Option<Vec<u8>>,
-
-    sock: MessageStream<TcpStream>,
-    token: Token,
 }
 
 impl Server {
@@ -73,10 +88,11 @@ impl Server {
             },
         };
 
-        match self.conns.insert_with(|token| { Connection {
+        match self.conns.insert_with(|token| Connection {
             name: None,
             sock: MessageStream::new(sock, ReaderOptions::default()),
-                token: token } }) {
+            token: token }) {
+
             Some(token) => {
                 // register the guy
                 event_loop.register(self.conns[token].sock.inner(), token,
@@ -94,18 +110,13 @@ impl Server {
         if let Some(r) = self.conns[token].sock.read_message()
             .unwrap_or_else(|e| { println!("{:?} (oh no)", e); None }) {
 
-            println!("got a msg");
-
             match deserialize(&r).unwrap() {
                 Message::Register { name } => {
                     let mut conn = &mut self.conns[token];
-                    conn.name = {
-                        let mut v = Vec::new();
-                        v.extend_from_slice(name);
-                        Some(v)
-                    };
+                    let name = Vec::from(name);
 
-                    self.names.insert(conn.name.clone().unwrap(), token);
+                    self.names.insert(name.clone(), token);
+                    conn.name = Some(name);
                 },
                 Message::Send { dest, body } => {
                     let name = {
@@ -124,9 +135,7 @@ impl Server {
                             let data = serialize_relay(name.as_slice(),
                                 dest, body);
 
-                            self.conns[token].sock.write_message(data).unwrap();
-                            event_loop.reregister(self.conns[token].sock.inner(), token,
-                                EventSet::all(), PollOpt::empty()).unwrap();
+                            self.conns[token].write_message(event_loop, data);
                         }
                     } else {
                         let token = *self.names.get(dest)
@@ -135,19 +144,14 @@ impl Server {
                         let data = serialize_relay(name.as_slice(),
                             dest, body);
 
-                        self.conns[token].sock.write_message(data).unwrap();
-                        event_loop.reregister(self.conns[token].sock.inner(), token,
-                            EventSet::all(), PollOpt::empty()).unwrap();
+                        self.conns[token].write_message(event_loop, data);
                     }
                 },
                 Message::Relay { source, dest, body } => {
                     let token = *self.names.get(dest).unwrap();
                     let data = serialize_relay(source, dest, body);
 
-                    let mut sock = &mut self.conns[token].sock;
-                    sock.write_message(data).unwrap();
-                    event_loop.reregister(sock.inner(), token,
-                        EventSet::all(), PollOpt::empty()).unwrap();
+                    self.conns[token].write_message(event_loop, data);
                 },
                 Message::Join { channel } => {
                     let name = {
@@ -184,6 +188,10 @@ impl Server {
                         None => (),
                     }
                 },
+                Message::Response { body } => {
+                    let data = serialize_response(b"no ur a client");
+                    self.conns[token].write_message(event_loop, data);
+                }
             }
         } else {
             println!("nope, let's go");
@@ -230,7 +238,8 @@ impl Handler for Server {
 
             if self.conns[token].sock.outbound_queue_len() == 0 {
                 event_loop.reregister(self.conns[token].sock.inner(), token,
-                    EventSet::readable() | EventSet::error() | EventSet::hup(), PollOpt::empty()).unwrap();
+                    EventSet::readable() | EventSet::error() | EventSet::hup(),
+                    PollOpt::empty()).unwrap();
             }
         }
 

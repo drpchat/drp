@@ -24,5 +24,9 @@ struct Message {
         part :group {
             channel @7 :Data;
         }
+
+        response :group {
+            body @8 :Data;
+        }
     }
 }
