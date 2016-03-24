@@ -115,8 +115,13 @@ impl Server {
                     let mut conn = &mut self.conns[token];
                     let name = Vec::from(name);
 
-                    self.names.insert(name.clone(), token);
-                    conn.name = Some(name);
+                    if self.names.contains_key(&name) {
+                        let data = serialize_response(b"dude ur not them");
+                        conn.write_message(event_loop, data);
+                    } else {
+                        self.names.insert(name.clone(), token);
+                        conn.name = Some(name);
+                    }
                 },
                 Message::Send { dest, body } => {
                     let name = {
