@@ -1,5 +1,6 @@
 #![feature(lookup_host)]
 #![feature(io)]
+#![feature(libc)]
 
 extern crate mio;
 extern crate bytes;
@@ -9,6 +10,8 @@ extern crate capnp;
 extern crate capnp_nonblock;
 
 extern crate drp;
+
+extern crate libc;
 
 use capnp::message::{Reader, ReaderSegments, ReaderOptions};
 use capnp_nonblock::MessageStream;
@@ -28,6 +31,12 @@ use std::net::{SocketAddr, lookup_host};
 use std::str::{from_utf8};
 
 use std::env;
+
+use libc::mkfifo;
+use libc::O_NONBLOCK;
+use libc::O_RDONLY;
+use libc::open;
+use std::ffi::CString;
 
 // Setup some tokens to allow us to identify which event is
 // for which socket.
@@ -49,9 +58,9 @@ impl Handler for Client {
     fn ready(&mut self, event_loop: &mut EventLoop<Client>, token: Token, event: EventSet) {
         if token == STDIN {
             if event.is_hup() {
-                writeln!(std::io::stderr(), "Event: stdin hup").unwrap();
-                event_loop.shutdown();
-                return;
+                //writeln!(std::io::stderr(), "Event: stdin hup").unwrap();
+                //event_loop.shutdown();
+                //return;
             } else if event.is_error() {
                 writeln!(std::io::stderr(), "Event: stdin error").unwrap();
                 event_loop.shutdown();
@@ -171,7 +180,16 @@ fn main() {
     let mut event_loop = EventLoop::new().unwrap();
 
     // register stdin
-    let sock = unsafe { PipeReader::from_raw_fd(0) };
+    let mut fd = unsafe {
+        let filename = CString::new("./in".clone()).unwrap().as_ptr();
+        mkfifo(filename, 0o666);
+        open(filename, O_NONBLOCK, O_RDONLY)
+    };
+    if fd < 0 {
+        println!("Open call failed. Reading from stdin instead.");
+        fd = 0;
+    }
+    let sock = unsafe { PipeReader::from_raw_fd(fd) };
     event_loop.register(&sock, STDIN,
         EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
 
