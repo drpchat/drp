@@ -16,6 +16,10 @@ path = "src/client.rs"
 name = "we"
 path = "src/we.rs"
 
+[[bin]]
+name = "uu"
+path = "src/uu.rs"
+
 [build-dependencies]
 capnpc = "*"
 
@@ -26,3 +30,4 @@ bytes = "*"
 nix = "*"
 capnp = "*"
 capnp-nonblock = "*"
+libc = "*"
