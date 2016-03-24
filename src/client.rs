@@ -167,12 +167,16 @@ impl Client {
                     let guys: Vec<&[u8]> = guys.splitn(3, |x| *x == 32).collect();
 
                     let recept = guys[0];
-                    //writeln!(std::io::stderr(), "recept: {:?}", recept).unwrap();
-                    println!("recept: {:?}", recept);
+                    writeln!(std::io::stderr(), "recept: {:?}", recept).unwrap();
 
                     let body = guys[1];
+                    writeln!(std::io::stderr(), "body: {:?}", body).unwrap();
 
-                    let data = serialize_send(recept, body);
+                    let data = if recept == b"join" {
+                        serialize_join(body)
+                    } else {
+                        serialize_send(recept, body)
+                    };
                     self.connection.write_message(data).unwrap();
 
                     event_loop.reregister(self.connection.inner(), FOONETIC,

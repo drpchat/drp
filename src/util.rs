@@ -8,6 +8,8 @@ pub enum Message {
     Register { name: Vec<u8> },
     Send { dest: Vec<u8>, body: Vec<u8> },
     Relay { source: Vec<u8>, dest: Vec<u8>, body: Vec<u8>, },
+    Join { channel: Vec<u8> },
+    Part { channel: Vec<u8> },
 }
 
 pub fn serialize<A>(msg: Message) -> Builder<HeapAllocator> {
@@ -18,6 +20,10 @@ pub fn serialize<A>(msg: Message) -> Builder<HeapAllocator> {
         Message::Relay { source, dest, body } =>
             serialize_relay(source.as_slice(),
                 dest.as_slice(), body.as_slice()),
+        Message::Join { channel } =>
+            serialize_join(channel.as_slice()),
+        Message::Part { channel } =>
+            serialize_part(channel.as_slice()),
     }
 }
 
@@ -48,6 +54,28 @@ pub fn serialize_relay(source: &[u8], dest: &[u8], body: &[u8]) -> Builder<HeapA
         mm.set_source(source);
         mm.set_dest(dest);
         mm.set_body(body);
+    }
+    data
+}
+
+pub fn serialize_join(channel: &[u8]) -> Builder<HeapAllocator> {
+    let mut data = Builder::new_default();
+    {
+        let msg = data.init_root::<message::Builder>();
+        let mut mm = msg.init_join();
+
+        mm.set_channel(channel);
+    }
+    data
+}
+
+pub fn serialize_part(channel: &[u8]) -> Builder<HeapAllocator> {
+    let mut data = Builder::new_default();
+    {
+        let msg = data.init_root::<message::Builder>();
+        let mut mm = msg.init_part();
+
+        mm.set_channel(channel);
     }
     data
 }

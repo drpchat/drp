@@ -26,7 +26,7 @@ fn main() {
 
     let mut event_loop = EventLoop::new().unwrap();
 
-    event_loop.register(&handler.sock, handler.token, EventSet::readable(), PollOpt::empty()).unwrap();
+    event_loop.register(&handler.sock, handler.token, EventSet::readable() | EventSet::error() | EventSet::hup(), PollOpt::empty()).unwrap();
     event_loop.run(&mut handler).unwrap();
 }
 
@@ -36,6 +36,7 @@ struct Server {
     conns: Slab<Connection>,
 
     names: HashMap<Vec<u8>, Token>,
+    channels: HashMap<Vec<u8>, Vec<Vec<u8>>>,
 }
 
 struct Connection {
@@ -52,6 +53,7 @@ impl Server {
             sock: TcpListener::bind(&FromStr::from_str("0.0.0.0:8765").unwrap()).unwrap(),
             conns: Slab::new_starting_at(Token(2), 128),
             names: HashMap::new(),
+            channels: HashMap::new(),
         }
     }
 
@@ -79,7 +81,7 @@ impl Server {
             Some(token) => {
                 // register the guy
                 event_loop.register(self.conns[token].sock.inner(), token,
-                    EventSet::readable(),
+                    EventSet::readable() | EventSet::error() | EventSet::hup(),
                     PollOpt::empty()).unwrap();
             },
             None => {
@@ -115,15 +117,33 @@ impl Server {
 
                     let dest = m.get_dest().unwrap();
                     println!("dest: {:?}", dest);
-                    let token = *self.names.get(dest)
-                        .expect("couldn't resolve dest");
-                    let data = serialize_relay(name.as_slice(),
-                        m.get_dest().unwrap(),
-                        m.get_body().unwrap());
 
-                    self.conns[token].sock.write_message(data).unwrap();
-                    event_loop.reregister(self.conns[token].sock.inner(), token,
-                        EventSet::all(), PollOpt::empty()).unwrap();
+                    if let Some(chanlist) = self.channels.get(dest) {
+                        for dest in chanlist {
+                            println!("{:?}", dest);
+                            let token = *self.names.get(dest)
+                                .expect("couldn't resolve dest");
+
+                            let data = serialize_relay(name.as_slice(),
+                                m.get_dest().unwrap(),
+                                m.get_body().unwrap());
+
+                            self.conns[token].sock.write_message(data).unwrap();
+                            event_loop.reregister(self.conns[token].sock.inner(), token,
+                                EventSet::all(), PollOpt::empty()).unwrap();
+                        }
+                    } else {
+                        let token = *self.names.get(dest)
+                            .expect("couldn't resolve dest");
+
+                        let data = serialize_relay(name.as_slice(),
+                            m.get_dest().unwrap(),
+                            m.get_body().unwrap());
+
+                        self.conns[token].sock.write_message(data).unwrap();
+                        event_loop.reregister(self.conns[token].sock.inner(), token,
+                            EventSet::all(), PollOpt::empty()).unwrap();
+                    }
                 },
                 Ok(message::Relay(m)) => {
                     let name = {
@@ -139,6 +159,43 @@ impl Server {
                     sock.write_message(data).unwrap();
                     event_loop.reregister(sock.inner(), token,
                         EventSet::all(), PollOpt::empty()).unwrap();
+                },
+                Ok(message::Join(m)) => {
+                    let name = {
+                        let ref name = self.conns[token].name;
+                        name.as_ref().unwrap().clone()
+                    };
+
+                    let mut c = Vec::new();
+                    c.extend_from_slice(m.get_channel().unwrap());
+                    
+                    let mut chans = &mut self.channels;
+
+                    if chans.get_mut(&c).map(|c| c.push(name.clone())).is_none() {
+                        chans.insert(c, vec![name]);
+                    }
+                },
+                Ok(message::Part(m)) => {
+                    let name = {
+                        let ref name = self.conns[token].name;
+                        name.as_ref().unwrap().clone()
+                    };
+
+                    let mut c = Vec::new();
+                    c.extend_from_slice(m.get_channel().unwrap());
+
+                    let mut chans = &mut self.channels;
+
+                    match chans.get_mut(&c) {
+                        Some(c) => {
+                            if let Ok(i) = c.binary_search(&name) {
+                                c.remove(i);
+                            }
+                        },
+                        None => (),
+                    }
+
+                    let c = m.get_channel().unwrap();
                 },
                 Err(e) => println!("fail in ford: {:?}", e),
             }
@@ -187,7 +244,7 @@ impl Handler for Server {
 
             if self.conns[token].sock.outbound_queue_len() == 0 {
                 event_loop.reregister(self.conns[token].sock.inner(), token,
-                    EventSet::readable(), PollOpt::empty()).unwrap();
+                    EventSet::readable() | EventSet::error() | EventSet::hup(), PollOpt::empty()).unwrap();
             }
         }
 
