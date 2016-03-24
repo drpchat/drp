@@ -1,29 +1,31 @@
 use capnp::message::{Builder, HeapAllocator};
+use capnp::message::{Reader, ReaderSegments};
+use capnp::{Error, Result};
 
 use drp_capnp::message;
 
 // todo: use bytes instead of string
 #[derive(Debug)]
-pub enum Message {
-    Register { name: Vec<u8> },
-    Send { dest: Vec<u8>, body: Vec<u8> },
-    Relay { source: Vec<u8>, dest: Vec<u8>, body: Vec<u8>, },
-    Join { channel: Vec<u8> },
-    Part { channel: Vec<u8> },
+pub enum Message<'a> {
+    Register { name: &'a [u8] },
+    Send { dest: &'a [u8], body: &'a [u8] },
+    Relay { source: &'a [u8], dest: &'a [u8], body: &'a [u8], },
+    Join { channel: &'a [u8] },
+    Part { channel: &'a [u8] },
 }
 
 pub fn serialize<A>(msg: Message) -> Builder<HeapAllocator> {
     match msg {
-        Message::Register { name } => serialize_register(name.as_slice()),
+        Message::Register { name } => serialize_register(name),
         Message::Send { dest , body } =>
-            serialize_send(dest.as_slice(), body.as_slice()),
+            serialize_send(dest, body),
         Message::Relay { source, dest, body } =>
-            serialize_relay(source.as_slice(),
-                dest.as_slice(), body.as_slice()),
+            serialize_relay(source,
+                dest, body),
         Message::Join { channel } =>
-            serialize_join(channel.as_slice()),
+            serialize_join(channel),
         Message::Part { channel } =>
-            serialize_part(channel.as_slice()),
+            serialize_part(channel),
     }
 }
 
@@ -78,4 +80,57 @@ pub fn serialize_part(channel: &[u8]) -> Builder<HeapAllocator> {
         mm.set_channel(channel);
     }
     data
+}
+
+pub fn deserialize<'a, S>(msg: &'a Reader<S>) -> Result<Message<'a>>
+    where S: ReaderSegments {
+
+    let msg = try!(msg.get_root::<message::Reader>());
+
+    match msg.which() {
+        Ok(msg) => match msg {
+            message::Register(msg) => deserialize_register(msg),
+            message::Send(msg) => deserialize_send(msg),
+            message::Relay(msg) => deserialize_relay(msg),
+            message::Join(msg) => deserialize_join(msg),
+            message::Part(msg) => deserialize_part(msg),
+        },
+        Err(e) => Err(Error::from(e)),
+    }
+}
+
+pub fn deserialize_register<'a>(msg: message::register::Reader<'a>)
+    -> Result<Message<'a>> {
+
+    Ok(Message::Register { name: try!(msg.get_name()) })
+}
+
+pub fn deserialize_send<'a>(msg: message::send::Reader<'a>)
+    -> Result<Message<'a>> {
+
+    Ok(Message::Send {
+        dest: try!(msg.get_dest()),
+        body: try!(msg.get_body()),
+    })
+}
+
+pub fn deserialize_relay<'a>(msg: message::relay::Reader<'a>)
+    -> Result<Message<'a>> {
+
+    Ok(Message::Relay {
+        source: try!(msg.get_source()),
+        dest: try!(msg.get_dest()),
+        body: try!(msg.get_body()),
+    })
+}
+
+pub fn deserialize_join<'a>(msg: message::join::Reader<'a>)
+    -> Result<Message<'a>> {
+
+    Ok(Message::Join { channel: try!(msg.get_channel()) })
+}
+
+pub fn deserialize_part<'a>(msg: message::part::Reader<'a>)
+    -> Result<Message<'a>> {
+    Ok(Message::Part { channel: try!(msg.get_channel()) })
 }

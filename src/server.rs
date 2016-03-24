@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use capnp::message::{ReaderOptions};
 use capnp_nonblock::MessageStream;
 
-use drp::message;
 use drp::util::*;
 
 fn main() {
@@ -95,27 +94,25 @@ impl Server {
         if let Some(r) = self.conns[token].sock.read_message()
             .unwrap_or_else(|e| { println!("{:?} (oh no)", e); None }) {
 
-            let msg = r.get_root::<message::Reader>().unwrap();
             println!("got a msg");
 
-            match msg.which() {
-                Ok(message::Register(m)) => {
+            match deserialize(&r).unwrap() {
+                Message::Register { name } => {
                     let mut conn = &mut self.conns[token];
                     conn.name = {
                         let mut v = Vec::new();
-                        v.extend_from_slice(m.get_name().unwrap());
+                        v.extend_from_slice(name);
                         Some(v)
                     };
 
                     self.names.insert(conn.name.clone().unwrap(), token);
                 },
-                Ok(message::Send(m)) => {
+                Message::Send { dest, body } => {
                     let name = {
                         let ref name = self.conns[token].name;
                         name.as_ref().unwrap().clone()
                     };
 
-                    let dest = m.get_dest().unwrap();
                     println!("dest: {:?}", dest);
 
                     if let Some(chanlist) = self.channels.get(dest) {
@@ -125,8 +122,7 @@ impl Server {
                                 .expect("couldn't resolve dest");
 
                             let data = serialize_relay(name.as_slice(),
-                                m.get_dest().unwrap(),
-                                m.get_body().unwrap());
+                                dest, body);
 
                             self.conns[token].sock.write_message(data).unwrap();
                             event_loop.reregister(self.conns[token].sock.inner(), token,
@@ -137,37 +133,30 @@ impl Server {
                             .expect("couldn't resolve dest");
 
                         let data = serialize_relay(name.as_slice(),
-                            m.get_dest().unwrap(),
-                            m.get_body().unwrap());
+                            dest, body);
 
                         self.conns[token].sock.write_message(data).unwrap();
                         event_loop.reregister(self.conns[token].sock.inner(), token,
                             EventSet::all(), PollOpt::empty()).unwrap();
                     }
                 },
-                Ok(message::Relay(m)) => {
-                    let name = {
-                        let name = &self.conns[token].name;
-                        name.as_ref().unwrap().clone()
-                    };
-
-                    let token = *self.names.get(m.get_dest().unwrap()).unwrap();
-                    let data = serialize_relay(m.get_source().unwrap(),
-                        m.get_dest().unwrap(), m.get_body().unwrap());
+                Message::Relay { source, dest, body } => {
+                    let token = *self.names.get(dest).unwrap();
+                    let data = serialize_relay(source, dest, body);
 
                     let mut sock = &mut self.conns[token].sock;
                     sock.write_message(data).unwrap();
                     event_loop.reregister(sock.inner(), token,
                         EventSet::all(), PollOpt::empty()).unwrap();
                 },
-                Ok(message::Join(m)) => {
+                Message::Join { channel } => {
                     let name = {
                         let ref name = self.conns[token].name;
                         name.as_ref().unwrap().clone()
                     };
 
                     let mut c = Vec::new();
-                    c.extend_from_slice(m.get_channel().unwrap());
+                    c.extend_from_slice(channel);
                     
                     let mut chans = &mut self.channels;
 
@@ -175,14 +164,14 @@ impl Server {
                         chans.insert(c, vec![name]);
                     }
                 },
-                Ok(message::Part(m)) => {
+                Message::Part { channel } => {
                     let name = {
                         let ref name = self.conns[token].name;
                         name.as_ref().unwrap().clone()
                     };
 
                     let mut c = Vec::new();
-                    c.extend_from_slice(m.get_channel().unwrap());
+                    c.extend_from_slice(channel);
 
                     let mut chans = &mut self.channels;
 
@@ -194,10 +183,7 @@ impl Server {
                         },
                         None => (),
                     }
-
-                    let c = m.get_channel().unwrap();
                 },
-                Err(e) => println!("fail in ford: {:?}", e),
             }
         } else {
             println!("nope, let's go");
