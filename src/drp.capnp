@@ -16,5 +16,13 @@ struct Message {
             dest @4 :Data;
             body @5 :Data;
         }
+
+        join :group {
+            channel @6 :Data;
+        }
+
+        part :group {
+            channel @7 :Data;
+        }
     }
 }
