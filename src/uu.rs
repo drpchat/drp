@@ -1,6 +1,4 @@
 #![feature(lookup_host)]
-#![feature(io)]
-#![feature(libc)]
 
 extern crate mio;
 extern crate bytes;
@@ -32,11 +30,13 @@ use std::str::{from_utf8};
 
 use std::env;
 
-use libc::mkfifo;
-use libc::O_NONBLOCK;
-use libc::O_RDONLY;
-use libc::open;
+use std::string::String;
+
+use libc::{mkfifo, open};
+use libc::{O_NONBLOCK, O_RDONLY};
 use std::ffi::CString;
+
+use std::fs::*;
 
 // Setup some tokens to allow us to identify which event is
 // for which socket.
@@ -47,8 +47,21 @@ const SERVCONN: Token = Token(2);
 struct Client {
     pipe: PipeReader,
     inbuf: Vec<u8>,
-
     connection: MessageStream<TcpStream>,
+}
+
+fn mk_fifos(dir: &str) -> i32 {
+    create_dir(dir);
+    let mut dirout: String = String::from(dir);
+    let mut dirin = dirout.clone();
+    dirin.push_str("/in");
+    dirout.push_str("/out");
+    let file = OpenOptions::new().create(true).append(true).open(dirout);
+    return unsafe {
+        let filename = CString::new(dirin).unwrap().as_ptr();
+        mkfifo(filename, 0o666);
+        open(filename, O_NONBLOCK, O_RDONLY)
+    };
 }
 
 impl Handler for Client {
@@ -57,11 +70,7 @@ impl Handler for Client {
 
     fn ready(&mut self, event_loop: &mut EventLoop<Client>, token: Token, event: EventSet) {
         if token == STDIN {
-            if event.is_hup() {
-                //writeln!(std::io::stderr(), "Event: stdin hup").unwrap();
-                //event_loop.shutdown();
-                //return;
-            } else if event.is_error() {
+            if event.is_error() {
                 writeln!(std::io::stderr(), "Event: stdin error").unwrap();
                 event_loop.shutdown();
                 return;
@@ -142,10 +151,17 @@ impl Client {
 
                     let target = inputs[0];
                     let body = inputs[1];
-
-                    let data = serialize_send(target, body);
+                    
+                    //let data = if target[0] == '/' as u8 {
+                        //println!("GOT COMMAND!");
+                    let data = match target {
+                            b"/join" => serialize_join(body),
+                            _ => serialize_send(target, body),
+                        };
+                    /*} else {
+                        serialize_send(target, body)
+                    }*/
                     self.connection.write_message(data).unwrap();
-
                     event_loop.reregister(self.connection.inner(), SERVCONN,
                         EventSet::all(), PollOpt::empty()).unwrap();
 
@@ -180,18 +196,14 @@ fn main() {
     let mut event_loop = EventLoop::new().unwrap();
 
     // register stdin
-    let mut fd = unsafe {
-        let filename = CString::new("./in".clone()).unwrap().as_ptr();
-        mkfifo(filename, 0o666);
-        open(filename, O_NONBLOCK, O_RDONLY)
-    };
+    let mut fd = mk_fifos("test1");
     if fd < 0 {
         println!("Open call failed. Reading from stdin instead.");
         fd = 0;
     }
     let sock = unsafe { PipeReader::from_raw_fd(fd) };
     event_loop.register(&sock, STDIN,
-        EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
+        EventSet::readable() | EventSet::error(), PollOpt::empty()).unwrap();
 
     // register and connect to server
     // Outofthy.me: 104.131.118.79

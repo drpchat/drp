@@ -1,5 +1,4 @@
 #![feature(lookup_host)]
-#![feature(io)]
 
 extern crate mio;
 extern crate bytes;
