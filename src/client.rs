@@ -9,6 +9,7 @@ extern crate nix;
 extern crate capnp;
 extern crate capnp_nonblock;
 
+#[macro_use]
 extern crate drp;
 
 use capnp::message::{Reader, ReaderSegments, ReaderOptions};
@@ -142,14 +143,27 @@ impl Client {
     fn handle_netin<S>(&mut self, r: Reader<S>) where S: ReaderSegments {
         let msg = r.get_root::<message::Reader>().unwrap();
 
-        if let Ok(message::Relay(m)) = msg.which() {
-            let mut v = Vec::new();
-            v.extend_from_slice(m.get_body().unwrap());
-            self.scroll.push_front(v);
+        match msg.which() {
+            Ok(message::Relay(m)) => {
+                let mut v = Vec::new();
+                v.extend_from_slice(m.get_body().unwrap());
+                self.scroll.push_front(v);
 
-            draw_scroll(&self.scroll);
-        } else {
-            panic!("baaad girrl");
+                draw_scroll(&self.scroll);
+            },
+            Ok(message::Response(m)) => {
+                let mut v: Vec<u8> = Vec::from(b"<<<" as &[u8]);
+                v.extend_from_slice(m.get_body().unwrap());
+                self.scroll.push_front(v);
+
+                draw_scroll(&self.scroll);
+            },
+            Ok(_) => {
+                eprintln!("no relay");
+            },
+            Err(e) => {
+                panic!("bad girl did: {:?}", e)
+            },
         }
     }
 
@@ -164,7 +178,11 @@ impl Client {
                     draw_scroll(&self.scroll);
 
                     let guys = self.inbuf.clone();
-                    let guys: Vec<&[u8]> = guys.splitn(3, |x| *x == 32).collect();
+                    let guys: Vec<&[u8]> = guys.splitn(2, |x| *x == 32).collect();
+
+                    if guys.len() < 2 {
+                        writeln!(std::io::stderr(), "not enough args").unwrap()
+                    }
 
                     let recept = guys[0];
                     writeln!(std::io::stderr(), "recept: {:?}", recept).unwrap();
@@ -174,6 +192,8 @@ impl Client {
 
                     let data = if recept == b"join" {
                         serialize_join(body)
+                    } else if recept == b"part" {
+                        serialize_part(body)
                     } else {
                         serialize_send(recept, body)
                     };
@@ -212,11 +232,20 @@ fn connect(host: &str, port: u16) -> TcpStream {
     ).unwrap()
 }
 
+struct NCurses;
+impl NCurses {
+    fn new() -> NCurses { initscr(); NCurses }
+}
+impl Drop for NCurses {
+    fn drop(&mut self) { endwin(); }
+}
+
 fn main() {
     let nick = env::args().nth(1).unwrap();
 
     // ncurses bullshit
-    initscr();
+    let nc = NCurses::new();
+
     cbreak();
     clear();
 
@@ -249,9 +278,6 @@ fn main() {
 
     writeln!(std::io::stderr(), "bluhhhhhhhhhhhh").unwrap();
     event_loop.run(&mut handler).unwrap();
-
-    // more ncurses bullshit
-    endwin();
 
     println!("we made it to the end");
 }

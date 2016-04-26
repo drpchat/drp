@@ -1,8 +1,15 @@
+#![macro_use]
+
 use capnp::message::{Builder, HeapAllocator};
 use capnp::message::{Reader, ReaderSegments};
 use capnp::{Error, Result};
 
 use drp_capnp::message;
+
+#[macro_export]
+macro_rules! eprintln {
+    ($($arg:tt)*) => ((writeln!(&mut ::std::io::stderr(), $($arg)*).unwrap()))
+}
 
 // todo: use bytes instead of string
 #[derive(Debug)]
