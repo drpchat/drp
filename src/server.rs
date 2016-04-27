@@ -118,10 +118,9 @@ impl Server {
     fn name_leaves(&mut self, name: &Vec<u8>, channel: &Vec<u8>) -> Option<()> {
         // remove name from channel
         let mut chans = self.channels.get_mut(channel);
-        let mut chans = if chans.is_none() {
-            return None;
-        } else {
-            chans.unwrap()
+        let mut chans = match chans {
+            None => return None,
+            Some(chans) => chans,
         };
 
         if let Ok(i) = chans.binary_search(&name) {
