@@ -145,7 +145,9 @@ impl Client {
 
         match msg.which() {
             Ok(message::Relay(m)) => {
-                let mut v = Vec::new();
+                let mut v = Vec::from(b"<" as &[u8]);
+                v.extend_from_slice(m.get_source().unwrap());
+                v.extend_from_slice(b"> " as &[u8]);
                 v.extend_from_slice(m.get_body().unwrap());
                 self.scroll.push_front(v);
 
