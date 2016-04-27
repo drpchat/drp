@@ -318,11 +318,9 @@ impl Handler for Server {
                 event_loop.shutdown();
             } else {
                 println!("connection on {:?} got error", token);
-                let name = {
-                    let conn = &self.conns[token];
-                    conn.name.clone()
-                };
-                self.name_quits(name.as_ref().unwrap());
+                if let Some(name) = self.conns[token].name.clone() {
+                    self.name_quits(&name);
+                }
                 self.conns.remove(token);
             }
 
@@ -335,11 +333,9 @@ impl Handler for Server {
                 event_loop.shutdown();
             } else {
                 println!("connection on {:?} got hup", token);
-                let name = {
-                    let conn = &self.conns[token];
-                    conn.name.clone()
-                };
-                self.name_quits(name.as_ref().unwrap());
+                if let Some(name) = self.conns[token].name.clone() {
+                    self.name_quits(&name);
+                }
                 self.conns.remove(token);
             }
 
