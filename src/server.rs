@@ -118,10 +118,9 @@ impl Server {
     fn name_leaves(&mut self, name: &Vec<u8>, channel: &Vec<u8>) -> Option<()> {
         // remove name from channel
         let mut chans = self.channels.get_mut(channel);
-        let mut chans = if chans.is_none() {
-            return None;
-        } else {
-            chans.unwrap()
+        let mut chans = match chans {
+            None => return None,
+            Some(chans) => chans,
         };
 
         if let Ok(i) = chans.binary_search(&name) {
@@ -318,11 +317,9 @@ impl Handler for Server {
                 event_loop.shutdown();
             } else {
                 println!("connection on {:?} got error", token);
-                let name = {
-                    let conn = &self.conns[token];
-                    conn.name.clone()
-                };
-                self.name_quits(name.as_ref().unwrap());
+                if let Some(name) = self.conns[token].name.clone() {
+                    self.name_quits(&name);
+                }
                 self.conns.remove(token);
             }
 
@@ -335,11 +332,9 @@ impl Handler for Server {
                 event_loop.shutdown();
             } else {
                 println!("connection on {:?} got hup", token);
-                let name = {
-                    let conn = &self.conns[token];
-                    conn.name.clone()
-                };
-                self.name_quits(name.as_ref().unwrap());
+                if let Some(name) = self.conns[token].name.clone() {
+                    self.name_quits(&name);
+                }
                 self.conns.remove(token);
             }
 
@@ -354,7 +349,7 @@ impl Handler for Server {
 
             if self.conns[token].sock.outbound_queue_len() == 0 {
                 event_loop.reregister(self.conns[token].sock.inner(), token,
-                    EventSet::readable() | EventSet::error() | EventSet::hup(),
+                    EventSet::all() ^ EventSet::writable(),
                     PollOpt::empty()).unwrap();
             }
         }

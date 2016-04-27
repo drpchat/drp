@@ -115,7 +115,7 @@ impl Handler for Client {
                 event_loop.shutdown();
                 return;
             }
-            
+
             if event.is_readable() {
                 if let Some(r) = self.connection.read_message()
                     .unwrap_or_else(|e| panic!("fuck ({})", e)) {
@@ -132,7 +132,8 @@ impl Handler for Client {
 
                 if self.connection.outbound_queue_len() == 0 {
                     event_loop.reregister(self.connection.inner(), FOONETIC,
-                        EventSet::readable(), PollOpt::empty()).unwrap();
+                        EventSet::all() ^ EventSet::writable(),
+                        PollOpt::empty()).unwrap();
                 }
             }
         }
@@ -145,7 +146,9 @@ impl Client {
 
         match msg.which() {
             Ok(message::Relay(m)) => {
-                let mut v = Vec::new();
+                let mut v = Vec::from(b"<" as &[u8]);
+                v.extend_from_slice(m.get_source().unwrap());
+                v.extend_from_slice(b"> " as &[u8]);
                 v.extend_from_slice(m.get_body().unwrap());
                 self.scroll.push_front(v);
 
