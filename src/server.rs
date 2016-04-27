@@ -349,7 +349,7 @@ impl Handler for Server {
 
             if self.conns[token].sock.outbound_queue_len() == 0 {
                 event_loop.reregister(self.conns[token].sock.inner(), token,
-                    EventSet::readable() | EventSet::error() | EventSet::hup(),
+                    EventSet::all() ^ EventSet::writable(),
                     PollOpt::empty()).unwrap();
             }
         }
