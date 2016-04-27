@@ -7,6 +7,7 @@ extern crate nix;
 extern crate capnp;
 extern crate capnp_nonblock;
 
+#[macro_use]
 extern crate drp;
 
 use capnp::message::{Reader, ReaderSegments, ReaderOptions};
@@ -21,6 +22,7 @@ use mio::unix::PipeReader;
 
 use std::os::unix::io::FromRawFd;
 use std::io::{Read, Write};
+use std::io;
 
 use std::net::{SocketAddr, lookup_host};
 
@@ -48,11 +50,11 @@ impl Handler for Client {
     fn ready(&mut self, event_loop: &mut EventLoop<Client>, token: Token, event: EventSet) {
         if token == STDIN {
             if event.is_hup() {
-                writeln!(std::io::stderr(), "Event: stdin hup").unwrap();
+                eprintln!("Event: stdin hup");
                 event_loop.shutdown();
                 return;
             } else if event.is_error() {
-                writeln!(std::io::stderr(), "Event: stdin error").unwrap();
+                eprintln!("Event: stdin error");
                 event_loop.shutdown();
                 return;
             }
@@ -64,18 +66,18 @@ impl Handler for Client {
                     Ok(n) => self.handle_stdin(&buf, n, event_loop),
 
                     Err(bad) => {
-                        writeln!(std::io::stderr(), "Event: stdin read error {}", bad).unwrap();
+                        eprintln!("Event: stdin read error {}", bad);
                         event_loop.shutdown();
                     },
                 }
             }
         } else {
             if event.is_hup() {
-                writeln!(std::io::stderr(), "Event: network hup").unwrap();
+                eprintln!("Event: Server closed connection, exiting");
                 event_loop.shutdown();
                 return;
             } else if event.is_error() {
-                writeln!(std::io::stderr(), "Event: network error").unwrap();
+                eprintln!("Event: Unknown server error");
                 event_loop.shutdown();
                 return;
             }
@@ -91,12 +93,12 @@ impl Handler for Client {
             }
 
             if event.is_writable() {
-                writeln!(std::io::stderr(), "Event: can write").unwrap();
+                eprintln!("Event: can write");
                 self.connection.write().unwrap();
 
                 if self.connection.outbound_queue_len() == 0 {
                     event_loop.reregister(self.connection.inner(), SERVCONN,
-                        EventSet::readable(), PollOpt::empty()).unwrap();
+                        EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
                 }
             }
         }
@@ -106,19 +108,30 @@ impl Handler for Client {
 impl Client {
     fn handle_netin<S>(&mut self, r: Reader<S>) where S: ReaderSegments {
         let msg = r.get_root::<message::Reader>().unwrap();
-
-        if let Ok(message::Relay(m)) = msg.which() {
-            let mut vbody = Vec::new();
-            vbody.extend_from_slice(m.get_body().unwrap());
-            let body = from_utf8(&vbody).unwrap();
+        match msg.which() {
+            Ok(message::Relay(m)) => {
+                let mut vbody = Vec::new();
+                vbody.extend_from_slice(m.get_body().unwrap());
+                let body = from_utf8(&vbody).unwrap();
             
-            let mut vsource = Vec::new();
-            vsource.extend_from_slice(m.get_source().unwrap());
-            let source = from_utf8(&vsource).unwrap();
+                let mut vsource = Vec::new();
+                vsource.extend_from_slice(m.get_source().unwrap());
+                let source = from_utf8(&vsource).unwrap();
             
-            println!("<{}> {}", source, body);
-        } else {
-            panic!("Client: network message error");
+                println!("<{}> {}", source, body);
+            },
+            Ok(message::Response(m)) => {
+                let mut vbody = Vec::new();
+                vbody.extend_from_slice(m.get_body().unwrap());
+                let body = from_utf8(&vbody).unwrap();
+                println!("-!- {}", body);
+            },
+            Ok(_) => {
+                println!("no relay?");
+            },
+            Err(e) => {
+                panic!("Client: network message error");
+            },
         }
     }
 
@@ -128,12 +141,34 @@ impl Client {
             match buf[i] {
                 b'\n' => { // this is what return does ?
                     let inputs = self.inbuf.clone();
-                    let inputs: Vec<&[u8]> = inputs.splitn(2, |x| *x == 32).collect();
+                    let inputs: Vec<&[u8]> = inputs.splitn(3, |x| *x == 32).collect();
 
-                    let target = inputs[0];
-                    let body = inputs[1];
+                    let cmd = inputs[0];
+                    let target = inputs[1];
+                    
+                    let data = match cmd {
+                        b"/join" | b"/j" => {
+                            println!("Channel Joined."); // Make it show the channel name
+                            serialize_join(target)
+                            },
+                        b"/part" | b"/p" => {
+                            println!("Channel Parted."); // Make it show the channel name
+                            serialize_part(target)
+                            },
+                        b"/msg" | b"/m" => {
+                            eprintln!("Message Sent.");
+                            let body = inputs[2];
+                            serialize_send(target, body)
+                            },
+                        _ => {
+                            println!("Sending message to {}", String::from_utf8(Vec::from(cmd)).unwrap());
+                            let mut body = Vec::from(target);
+                            let target = cmd;
+                            body.extend_from_slice(inputs[2]);
+                            serialize_send(target, &body)
+                        }
+                    };
 
-                    let data = serialize_send(target, body);
                     self.connection.write_message(data).unwrap();
 
                     event_loop.reregister(self.connection.inner(), SERVCONN,
@@ -153,13 +188,12 @@ impl Client {
 }
 
 // TODO this function is a piece of fucking shit
-fn connect(host: &str, port: u16) -> TcpStream {
+fn connect(host: &str, port: u16) -> io::Result<TcpStream> {
     TcpStream::connect(
-        &
-        SocketAddr::new(
+        &SocketAddr::new(
         lookup_host(host).unwrap().next().unwrap().unwrap().ip()
         ,port)
-    ).unwrap()
+        )
 }
 
 fn main() {
@@ -176,7 +210,13 @@ fn main() {
 
     // register and connect to server
     // Outofthy.me: 104.131.118.79
-    let serv_conn = connect(&ip, 8765);
+    let serv_conn = match connect(&ip, 8765) {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("Remote server not running: {}", e);
+            return;
+        },
+    };    
 
     let mut serv_conn = MessageStream::new(serv_conn, ReaderOptions::default());
 
