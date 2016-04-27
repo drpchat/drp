@@ -95,13 +95,17 @@ impl Server {
 
     // a user is joining a channel
     fn name_joins(&mut self, name: &Vec<u8>, channel: &Vec<u8>) -> Option<()> {
-        if self.channels.contains_key(name) {
-            return None;
-        }
+        //if self.channels.contains_key(name) {
+        //    return None;
+        //}
 
         // add name to channel
-        self.channels.entry(channel.clone())
-            .or_insert(Vec::new()).push(name.clone());
+        let chan = self.channels.entry(channel.clone()).or_insert(Vec::new());
+        if chan.contains(name) {
+            return None
+        } else {
+            chan.push(name.clone());
+        }
 
         // add channel to name
         let token = self.names[name];
