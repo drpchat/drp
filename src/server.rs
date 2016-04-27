@@ -47,6 +47,8 @@ impl Connection {
     fn write_message(&mut self, event_loop: &mut EventLoop<Server>,
         msg: Builder<HeapAllocator>) {
 
+        println!("writing");
+
         self.sock.write_message(msg).unwrap();
         event_loop.reregister(self.sock.inner(), self.token,
             EventSet::all(), PollOpt::empty()).unwrap();
@@ -93,15 +95,9 @@ impl Server {
 
     // a user is joining a channel
     fn name_joins(&mut self, name: &Vec<u8>, channel: &Vec<u8>) -> Option<()> {
+        // add name to channel
         self.channels.entry(channel.clone())
             .or_insert(Vec::new()).push(name.clone());
-
-        // add name to channel
-        if self.channels.get_mut(channel).map(|c|
-            c.push(name.clone())).is_none() {
-
-            self.channels.insert(channel.clone(), vec![name.clone()]);
-        }
 
         // add channel to name
         let token = self.names[name];
@@ -204,28 +200,33 @@ impl Server {
     fn handle_send(&mut self, event_loop: &mut EventLoop<Server>,
     token: Token, dest: &[u8], body: &[u8]) {
 
-        let mut conn = &mut self.conns[token];
-        let name = match conn.name.clone() {
-            Some(name) => name,
-            None => {
-                let data = serialize_response(b"this isnt 4chan");
-                conn.write_message(event_loop, data);
-                return
+        let name = {
+            let mut conn = &mut self.conns[token];
+            match conn.name.clone() {
+                Some(name) => name,
+                None => {
+                    let data = serialize_response(b"this isnt 4chan");
+                    conn.write_message(event_loop, data);
+                    return
+                }
             }
         };
 
         println!("dest: {:?}", dest);
 
         if let Some(chanlist) = self.channels.get(dest) {
+            println!("chanlist: {:?}", chanlist);
             for dest in chanlist {
-                println!("{:?}", dest);
+                println!("putting to {:?}",
+                    String::from_utf8(dest.clone()).unwrap());
+
                 let token = *self.names.get(dest)
                     .expect("couldn't resolve dest");
 
                 let data = serialize_relay(name.as_slice(),
                     dest, body);
 
-                conn.write_message(event_loop, data);
+                self.conns[token].write_message(event_loop, data);
             }
         } else {
             println!("doing a lil guy");
@@ -238,7 +239,7 @@ impl Server {
             let data = serialize_relay(name.as_slice(),
                 dest, body);
 
-            conn.write_message(event_loop, data);
+            self.conns[token].write_message(event_loop, data);
         }
     }
 
