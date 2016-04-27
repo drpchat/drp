@@ -95,6 +95,10 @@ impl Server {
 
     // a user is joining a channel
     fn name_joins(&mut self, name: &Vec<u8>, channel: &Vec<u8>) -> Option<()> {
+        if self.channels.contains_key(name) {
+            return None;
+        }
+
         // add name to channel
         self.channels.entry(channel.clone())
             .or_insert(Vec::new()).push(name.clone());
@@ -103,13 +107,19 @@ impl Server {
         let token = self.names[name];
         self.conns[token].channels.push(channel.clone());
 
-        return Some(())
+        Some(())
     }
 
     // a user is leaving a channel
-    fn name_leaves(&mut self, name: &Vec<u8>, channel: &Vec<u8>) {
+    fn name_leaves(&mut self, name: &Vec<u8>, channel: &Vec<u8>) -> Option<()> {
         // remove name from channel
-        let mut chans = self.channels.get_mut(channel).unwrap(); // TODO
+        let mut chans = self.channels.get_mut(channel);
+        let mut chans = if chans.is_none() {
+            return None;
+        } else {
+            chans.unwrap()
+        };
+
         if let Ok(i) = chans.binary_search(&name) {
             chans.remove(i);
         }
@@ -118,7 +128,11 @@ impl Server {
         let token = self.names[name];
         if let Ok(i) = self.conns[token].channels.binary_search(&channel) {
             self.conns[token].channels.remove(i);
+        } else {
+            return None;
         }
+
+        Some(())
     }
 
     // name quits the server: needs to leave all channels and clear name
@@ -269,7 +283,10 @@ impl Server {
     token: Token, channel: &[u8]) {
         
         if let Some(name) = self.conns[token].name.clone() {
-            self.name_leaves(&name, &Vec::from(channel));
+            self.name_leaves(&name, &Vec::from(channel)).unwrap_or_else(|| {
+                let data = serialize_response(b"you're not even there!!");
+                self.conns[token].write_message(event_loop, data);
+            });
         } else {
             let data = serialize_response(b"who ARE u!?!");
             self.conns[token].write_message(event_loop, data);
