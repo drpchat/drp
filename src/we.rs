@@ -3,6 +3,8 @@
 extern crate mio;
 extern crate bytes;
 extern crate nix;
+extern crate rustc_serialize;
+extern crate sodiumoxide;
 
 extern crate capnp;
 extern crate capnp_nonblock;
@@ -20,9 +22,15 @@ use mio::*;
 use mio::tcp::TcpStream;
 use mio::unix::PipeReader;
 
+use rustc_serialize::hex::*;
+use sodiumoxide::crypto::box_;
+use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::*;
+
 use std::os::unix::io::FromRawFd;
 use std::io::{Read, Write};
 use std::io;
+
+use std::fs::File;
 
 use std::net::{SocketAddr, lookup_host};
 
@@ -39,7 +47,8 @@ const SERVCONN: Token = Token(2);
 struct Client {
     pipe: PipeReader,
     inbuf: Vec<u8>,
-
+    seckey: SecretKey,
+    pubkey: PublicKey,
     connection: MessageStream<TcpStream>,
 }
 
@@ -126,6 +135,17 @@ impl Client {
                 let body = from_utf8(&vbody).unwrap();
                 println!("-!- {}", body);
             },
+            Ok(message::Theyare(m)) => {
+                let mut vname = Vec::new();
+                vname.extend_from_slice(m.get_name().unwrap());
+                let name = from_utf8(&vname).unwrap();
+            
+                let mut vpubkey = Vec::new();
+                vpubkey.extend_from_slice(m.get_pubkey().unwrap());
+                let pubkey = from_utf8(&vpubkey).unwrap();
+            
+                println!("-!- Pubkey for {}: {}", name, pubkey);
+            },
             Ok(_) => {
                 println!("no relay?");
             },
@@ -155,10 +175,13 @@ impl Client {
                             println!("Channel Parted."); // Make it show the channel name
                             serialize_part(target)
                             },
-                        b"/msg" | b"/m" => {
+                        b"/msg" | b"/m" | b"/send" => {
                             eprintln!("Message Sent.");
                             let body = inputs[2];
                             serialize_send(target, body)
+                            },
+                        b"/whois" | "/w" => {
+                            serialize_whois(target)
                             },
                         _ => {
                             println!("Sending message to {}", String::from_utf8(Vec::from(cmd)).unwrap());
@@ -221,14 +244,31 @@ fn main() {
     let mut serv_conn = MessageStream::new(serv_conn, ReaderOptions::default());
 
     let data = serialize_register(nick.into_bytes().as_slice());
-    serv_conn.write_message(data).unwrap();
+    if let Err(e) = serv_conn.write_message(data) {
+        eprintln!("Remote server not running: {}", e);
+        return; // TODO But why though?
+    };
 
     event_loop.register(serv_conn.inner(), SERVCONN,
         EventSet::all(), PollOpt::empty()).unwrap();
+        
+    let mut pk = File::open("./pk.key").unwrap();
+    let mut keystring = String::new();
+    pk.read_to_string(&mut keystring).unwrap();
+    let pk = keystring.from_hex().unwrap();
+    let pk = PublicKey::from_slice(&pk).unwrap();
+    
+    let mut sk = File::open("./sk.key").unwrap();
+    let mut keystring = String::new();
+    sk.read_to_string(&mut keystring).unwrap();
+    let sk = keystring.from_hex().unwrap();
+    let sk = SecretKey::from_slice(&sk).unwrap();
 
     // Start handling events
     let mut handler = Client { pipe: sock,
                                inbuf: Vec::new(),
+                               seckey: sk,
+                               pubkey: pk,
                                connection: serv_conn, };
 
     writeln!(std::io::stderr(), "Main Loop: Connected & Running").unwrap();
