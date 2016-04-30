@@ -199,6 +199,10 @@ impl Server {
                     self.handle_part(event_loop, token, channel),
                 Message::Response { body } =>
                     self.handle_response(event_loop, token, body),
+                Message::Whois { name } =>
+                    self.handle_whois(event_loop, token, name),
+                Message::Theyare { name, pubkey } =>
+                    self.handle_theyare(event_loop, token, name, pubkey),
             }
         } else {
             println!("nope, let's go");
@@ -300,6 +304,20 @@ impl Server {
     token: Token, body: &[u8]) {
 
         let data = serialize_response(b"no ur a client");
+        self.conns[token].write_message(event_loop, data);
+    }
+
+    fn handle_whois(&mut self, event_loop: &mut EventLoop<Server>,
+        token: Token, name: &[u8]) {
+
+        let data = serialize_theyare(name, b"0xuhhhhh yes");
+        self.conns[token].write_message(event_loop, data);
+    }
+
+    fn handle_theyare(&mut self, event_loop: &mut EventLoop<Server>,
+        token: Token, name: &[u8], pubkey: &[u8]) {
+
+        let data = serialize_response(b"i already NEW that");
         self.conns[token].write_message(event_loop, data);
     }
 }

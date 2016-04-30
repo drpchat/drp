@@ -11,11 +11,6 @@ struct Message {
             body @2 :Data;
         }
 
-        relay :group {
-            source @3 :Data;
-            dest @4 :Data;
-            body @5 :Data;
-        }
 
         join :group {
             channel @6 :Data;
@@ -25,8 +20,25 @@ struct Message {
             channel @7 :Data;
         }
 
+
+        whois :group {
+            name @9 :Data;
+        }
+
+        theyare :group {
+            name @10 :Data;
+            pubkey @11 :Data;
+        }
+
+
         response :group {
             body @8 :Data;
+        }
+
+        relay :group {
+            source @3 :Data;
+            dest @4 :Data;
+            body @5 :Data;
         }
     }
 }
