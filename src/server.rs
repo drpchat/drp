@@ -38,6 +38,7 @@ struct Connection {
     //interest: EventSet,
 
     name: Option<Vec<u8>>,
+    pubkey: Option<Vec<u8>>,
     channels: Vec<Vec<u8>>,
 }
 
@@ -167,7 +168,8 @@ impl Server {
         match self.conns.insert_with(|token| Connection {
             sock: MessageStream::new(sock, ReaderOptions::default()),
             token: token,
-            name: None, channels: Vec::new() }) {
+            name: None, pubkey: None,
+            channels: Vec::new() }) {
 
             Some(token) => {
                 // register the guy
@@ -187,8 +189,8 @@ impl Server {
             .unwrap_or_else(|e| { println!("{:?} (oh no)", e); None }) {
 
             match deserialize(&r).unwrap() {
-                Message::Register { name } =>
-                    self.handle_register(event_loop, token, name),
+                Message::Register { name, pubkey } =>
+                    self.handle_register(event_loop, token, name, pubkey),
                 Message::Send { dest, body } =>
                     self.handle_send(event_loop, token, dest, body),
                 Message::Relay { source, dest, body } =>
@@ -210,7 +212,7 @@ impl Server {
     }
 
     fn handle_register(&mut self, event_loop: &mut EventLoop<Server>,
-        token: Token, name: &[u8]) {
+        token: Token, name: &[u8], pubkey: &[u8]) {
 
         self.add_name(token, &Vec::from(name)).unwrap_or_else(|| {
             let data = serialize_response(b"dude ur not them");
@@ -310,7 +312,15 @@ impl Server {
     fn handle_whois(&mut self, event_loop: &mut EventLoop<Server>,
         token: Token, name: &[u8]) {
 
-        let data = serialize_theyare(name, b"0xuhhhhh yes");
+        if let Some(id) = self.names.get(name) {
+            if let Some(pubkey) = self.conns[*id].pubkey.clone() {
+                let data = serialize_theyare(name, &pubkey);
+                self.conns[token].write_message(event_loop, data);
+                return;
+            }
+        }
+
+        let data = serialize_response(b"they don't exist");
         self.conns[token].write_message(event_loop, data);
     }
 
