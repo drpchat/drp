@@ -128,11 +128,11 @@ impl Server {
             Some(chans) => chans,
         };
 
-        // failing in some cases ??
-        chans.remove(name);
-
+        if !chans.remove(name) {
+            return None;
         }
 
+        }
         eprintln!("B: {:?}", self.channels.clone());
 
         // remove channel from name
