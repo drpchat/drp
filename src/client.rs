@@ -35,8 +35,6 @@ use std::collections::HashMap;
 
 use std::net::{SocketAddr, lookup_host};
 
-use std::str::{from_utf8};
-
 use std::env;
 
 // Setup some tokens to allow us to identify which event is
