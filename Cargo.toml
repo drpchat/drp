@@ -5,16 +5,12 @@ authors = ["Lily Houghton <lily.anachrome@gmail.com>", "AJ Trainor <lhk@lhk.me>"
 build = "build.rs"
 
 [[bin]]
-name = "server"
+name = "drpc"
 path = "src/server.rs"
 
 [[bin]]
-name = "client"
+name = "drpd"
 path = "src/client.rs"
-
-[[bin]]
-name = "we"
-path = "src/we.rs"
 
 [[bin]]
 name = "keygen"
