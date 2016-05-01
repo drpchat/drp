@@ -1,10 +1,10 @@
 #![feature(lookup_host)]
-#![feature(io)]
 
-extern crate ncurses;
 extern crate mio;
 extern crate bytes;
 extern crate nix;
+extern crate rustc_serialize;
+extern crate sodiumoxide;
 
 extern crate capnp;
 extern crate capnp_nonblock;
@@ -18,18 +18,23 @@ use capnp_nonblock::MessageStream;
 use drp::message;
 use drp::util::*;
 
-use ncurses::*;
-
 use mio::*;
 use mio::tcp::TcpStream;
 use mio::unix::PipeReader;
 
+use rustc_serialize::hex::*;
+use sodiumoxide::crypto::box_;
+use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::*;
+
 use std::os::unix::io::FromRawFd;
 use std::io::{Read, Write};
+use std::io;
+
+use std::fs::File;
+use std::collections::HashMap;
 
 use std::net::{SocketAddr, lookup_host};
 
-use std::collections::VecDeque;
 use std::str::{from_utf8};
 
 use std::env;
@@ -37,43 +42,16 @@ use std::env;
 // Setup some tokens to allow us to identify which event is
 // for which socket.
 const STDIN: Token = Token(0);
-const FOONETIC: Token = Token(2);
-
-fn draw_scroll(scroll: &VecDeque<Vec<u8>>) {
-    let mut i = LINES - 2;
-    for line in scroll.iter() {
-        i -= line.len() as i32 / COLS + 1;
-
-        if i < 0 { break }
-
-        for (j, line) in line.chars().map(|x| x.unwrap())
-                                     .collect::<Vec<char>>()
-                                     .chunks(COLS as usize).enumerate() {
-            mv(i + j as i32, 0);
-            for c in line {
-                addch(*c as u64);
-            }
-        }
-
-        clrtoeol();
-    }
-
-    mv(LINES - 2, 0);
-    for _ in 0..COLS {
-        printw("-");
-    }
-
-    mv(LINES - 1, 0);
-    refresh();
-}
+const SERVCONN: Token = Token(2);
 
 // Define a handler to process the events
 struct Client {
     pipe: PipeReader,
     inbuf: Vec<u8>,
-
+    seckey: SecretKey,
+    pubkey: PublicKey,
+    keys: HashMap<Vec<u8>, PrecomputedKey>,
     connection: MessageStream<TcpStream>,
-    scroll: VecDeque<Vec<u8>>,
 }
 
 impl Handler for Client {
@@ -83,11 +61,11 @@ impl Handler for Client {
     fn ready(&mut self, event_loop: &mut EventLoop<Client>, token: Token, event: EventSet) {
         if token == STDIN {
             if event.is_hup() {
-                writeln!(std::io::stderr(), "stdin hup").unwrap();
+                eprintln!("Event: stdin hup");
                 event_loop.shutdown();
                 return;
             } else if event.is_error() {
-                writeln!(std::io::stderr(), "stdin error").unwrap();
+                eprintln!("Event: stdin error");
                 event_loop.shutdown();
                 return;
             }
@@ -99,40 +77,39 @@ impl Handler for Client {
                     Ok(n) => self.handle_stdin(&buf, n, event_loop),
 
                     Err(bad) => {
-                        writeln!(std::io::stderr(), "bad a! {}", bad).unwrap();
+                        eprintln!("Event: stdin read error {}", bad);
                         event_loop.shutdown();
                     },
                 }
             }
         } else {
             if event.is_hup() {
-                writeln!(std::io::stderr(), "net hup").unwrap();
+                eprintln!("Event: Server closed connection, exiting");
                 event_loop.shutdown();
                 return;
             } else if event.is_error() {
-                writeln!(std::io::stderr(), "net error").unwrap();
+                eprintln!("Event: Unknown server error");
                 event_loop.shutdown();
                 return;
             }
-
+            
             if event.is_readable() {
                 if let Some(r) = self.connection.read_message()
-                    .unwrap_or_else(|e| panic!("fuck ({})", e)) {
+                    .unwrap_or_else(|e| panic!("Event: capnproto error: ({})", e)) {
 
                     self.handle_netin(r);
                 } else {
-                    writeln!(std::io::stderr(), "not really :(").unwrap();
+                    //writeln!(std::io::stderr(), "Event: partial message").unwrap();
                 }
             }
 
             if event.is_writable() {
-                writeln!(std::io::stderr(), "gotta write fast").unwrap();
+                eprintln!("Event: can write");
                 self.connection.write().unwrap();
 
                 if self.connection.outbound_queue_len() == 0 {
-                    event_loop.reregister(self.connection.inner(), FOONETIC,
-                        EventSet::all() ^ EventSet::writable(),
-                        PollOpt::empty()).unwrap();
+                    event_loop.reregister(self.connection.inner(), SERVCONN,
+                        EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
                 }
             }
         }
@@ -140,68 +117,92 @@ impl Handler for Client {
 }
 
 impl Client {
+    fn handle_relay(&mut self, source: Vec<u8>, 
+        dest: Vec<u8>, body: Vec<u8>, nonce: Option<&[u8]>) {
+        let body = if let Some(nonce) = nonce {
+            println!("Decrypting...");
+            let prekey = self.keys.get(&source).unwrap();
+            box_::open_precomputed(&body, &Nonce::from_slice(nonce).unwrap(), &prekey).unwrap()
+        } else {
+            body
+        };
+        println!("<{}> {}", String::from_utf8(source).unwrap(), String::from_utf8(body).unwrap());
+    }
+    
+    fn handle_response(&mut self, body: Vec<u8>) {
+        println!("-!- {}", String::from_utf8(body).unwrap());
+    }
+    
+    fn handle_theyare(&mut self, name: Vec<u8>, pubkey: &[u8]) {
+        let pubkey = PublicKey::from_slice(pubkey).unwrap();
+        let prekey = box_::precompute(&pubkey, &self.seckey);
+        self.keys.insert(name.clone(), prekey);
+        println!("-!- Pubkey for {} added.", String::from_utf8(name).unwrap());
+    }
+    
     fn handle_netin<S>(&mut self, r: Reader<S>) where S: ReaderSegments {
-        let msg = r.get_root::<message::Reader>().unwrap();
-
-        match msg.which() {
-            Ok(message::Relay(m)) => {
-                let mut v = Vec::from(b"<" as &[u8]);
-                v.extend_from_slice(m.get_source().unwrap());
-                v.extend_from_slice(b"> " as &[u8]);
-                v.extend_from_slice(m.get_body().unwrap());
-                self.scroll.push_front(v);
-
-                draw_scroll(&self.scroll);
-            },
-            Ok(message::Response(m)) => {
-                let mut v: Vec<u8> = Vec::from(b"<<<" as &[u8]);
-                v.extend_from_slice(m.get_body().unwrap());
-                self.scroll.push_front(v);
-
-                draw_scroll(&self.scroll);
-            },
-            Ok(_) => {
-                eprintln!("no relay");
-            },
-            Err(e) => {
-                panic!("bad girl did: {:?}", e)
-            },
-        }
+        match deserialize(&r).unwrap() {
+            Message::Relay { source, dest, body, nonce } =>
+                self.handle_relay(Vec::from(source), 
+                     Vec::from(dest), Vec::from(body), nonce),
+            Message::Response { body } =>
+                self.handle_response(Vec::from(body)),
+            Message::Theyare { name, pubkey } =>
+                self.handle_theyare(Vec::from(name), pubkey),
+            _ => (),
+        }    
     }
 
     // len is the amount of the buffer we actually filled up
     fn handle_stdin(&mut self, buf: &Vec<u8>, len: usize, event_loop: &mut EventLoop<Client>) {
         for i in 0..len {
-            writeln!(std::io::stderr(), "key: {:?}", buf[i]).unwrap();
             match buf[i] {
-                b'\r' => { // this is what return does ?
-                    self.scroll.push_front(self.inbuf.clone());
-                    clear();
-                    draw_scroll(&self.scroll);
+                b'\n' => { // this is what return does ?
+                    let inputs = self.inbuf.clone();
+                    let inputs: Vec<&[u8]> = inputs.splitn(3, |x| *x == 32).collect();
 
-                    let guys = self.inbuf.clone();
-                    let guys: Vec<&[u8]> = guys.splitn(2, |x| *x == 32).collect();
-
-                    if guys.len() < 2 {
-                        writeln!(std::io::stderr(), "not enough args").unwrap()
-                    }
-
-                    let recept = guys[0];
-                    writeln!(std::io::stderr(), "recept: {:?}", recept).unwrap();
-
-                    let body = guys[1];
-                    writeln!(std::io::stderr(), "body: {:?}", body).unwrap();
-
-                    let data = if recept == b"join" {
-                        serialize_join(body)
-                    } else if recept == b"part" {
-                        serialize_part(body)
-                    } else {
-                        serialize_send(recept, body, None)
+                    let cmd = inputs[0];
+                    let target = inputs[1];
+                    
+                    let data = match cmd {
+                        b"/join" | b"/j" => {
+                            println!("Channel Joined."); // Make it show the channel name
+                            serialize_join(target)
+                        },
+                        b"/part" | b"/p" => {
+                            println!("Channel Parted."); // Make it show the channel name
+                            serialize_part(target)
+                        },
+                        b"/msg" | b"/m" | b"/send" => {
+                            eprintln!("Message Sent.");
+                            if self.keys.contains_key(target) {
+                                println!("Sending message encrypted");
+                                let nonce = box_::gen_nonce();
+                                let body = &box_::seal_precomputed(inputs[2], &nonce, 
+                                    &self.keys.get(target).unwrap());
+                                let nonce: &[u8] = &nonce.0;
+                                serialize_send(target, body, Some(nonce))
+                            } else {
+                                serialize_send(target, inputs[2], None)
+                            }
+                        },
+                        b"/whois" | b"/w" => {
+                            eprintln!("Whois guy");
+                            serialize_whois(target)
+                        },
+                        _ => {
+                            println!("Sending message to {}", 
+                                String::from_utf8(Vec::from(cmd)).unwrap());
+                            let mut body = Vec::from(target);
+                            let target = cmd;
+                            body.extend_from_slice(inputs[2]);
+                            serialize_send(target, &body, None)
+                        },
                     };
+
                     self.connection.write_message(data).unwrap();
 
-                    event_loop.reregister(self.connection.inner(), FOONETIC,
+                    event_loop.reregister(self.connection.inner(), SERVCONN,
                         EventSet::all(), PollOpt::empty()).unwrap();
 
                     self.inbuf.clear();
@@ -214,42 +215,21 @@ impl Client {
                 },
             }
         }
-
-        mv(LINES - 1, self.inbuf.len() as i32);
-        for _ in self.inbuf.len()..COLS as usize {
-            printw(" ");
-        }
-        mvprintw(LINES - 1, 0, from_utf8(self.inbuf.as_slice()).unwrap());
-        refresh();
     }
 }
 
 // TODO this function is a piece of fucking shit
-fn connect(host: &str, port: u16) -> TcpStream {
+fn connect(host: &str, port: u16) -> io::Result<TcpStream> {
     TcpStream::connect(
-        &
-        SocketAddr::new(
+        &SocketAddr::new(
         lookup_host(host).unwrap().next().unwrap().unwrap().ip()
         ,port)
-    ).unwrap()
-}
-
-struct NCurses;
-impl NCurses {
-    fn new() -> NCurses { initscr(); NCurses }
-}
-impl Drop for NCurses {
-    fn drop(&mut self) { endwin(); }
+        )
 }
 
 fn main() {
     let nick = env::args().nth(1).unwrap();
-
-    // ncurses bullshit
-    let nc = NCurses::new();
-
-    cbreak();
-    clear();
+    let ip = env::args().nth(2).unwrap();
 
     // Create an event loop
     let mut event_loop = EventLoop::new().unwrap();
@@ -259,27 +239,50 @@ fn main() {
     event_loop.register(&sock, STDIN,
         EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
 
-    // register freenode
-    let free_irc = connect("127.0.0.1", 8765);
+    // register and connect to server
+    // Outofthy.me: 104.131.118.79
+    let serv_conn = match connect(&ip, 8765) {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("Remote server not running: {}", e);
+            return;
+        },
+    };    
 
-    let mut free_irc = MessageStream::new(free_irc, ReaderOptions::default());
+    let mut serv_conn = MessageStream::new(serv_conn, ReaderOptions::default());
+    
+    // Load in public and secret keys
+    let mut pk = File::open("./pk.key").unwrap();
+    let mut pkeys = String::new();
+    pk.read_to_string(&mut pkeys).unwrap();
+    let pkeys = pkeys.from_hex().unwrap();
+    let pk = PublicKey::from_slice(&pkeys).unwrap();
+    
+    let mut sk = File::open("./sk.key").unwrap();
+    let mut skeys = String::new();
+    sk.read_to_string(&mut skeys).unwrap();
+    let sk = skeys.from_hex().unwrap();
+    let sk = SecretKey::from_slice(&sk).unwrap();
 
-    let data = serialize_register(nick.into_bytes().as_slice(), b"");
-    free_irc.write_message(data).unwrap();
+    // Send Register with public key and nick
+    let data = serialize_register(nick.into_bytes().as_slice(), &pkeys);
+    if let Err(e) = serv_conn.write_message(data) {
+        eprintln!("Remote server not running: {}", e);
+        return; // TODO But why though?
+    };
 
-    event_loop.register(free_irc.inner(), FOONETIC,
+    event_loop.register(serv_conn.inner(), SERVCONN,
         EventSet::all(), PollOpt::empty()).unwrap();
-
+        
     // Start handling events
-    let mut handler = Client { pipe: sock, //foon: irc,
+    let mut handler = Client { pipe: sock,
                                inbuf: Vec::new(),
-                               connection: free_irc,
-                               scroll: VecDeque::new(), };
+                               seckey: sk,
+                               pubkey: pk,
+                               keys: HashMap::new(),
+                               connection: serv_conn, };
 
-    draw_scroll(&handler.scroll);
-
-    writeln!(std::io::stderr(), "bluhhhhhhhhhhhh").unwrap();
+    writeln!(std::io::stderr(), "Main Loop: Connected & Running").unwrap();
     event_loop.run(&mut handler).unwrap();
 
-    println!("we made it to the end");
 }
