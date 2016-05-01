@@ -10,6 +10,7 @@ struct Message {
         send :group {
             dest @1 :Data;
             body @2 :Data;
+            nonce @13 :Data;
         }
 
 

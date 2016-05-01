@@ -195,8 +195,8 @@ impl Server {
             match deserialize(&r).unwrap() {
                 Message::Register { name, pubkey } =>
                     self.handle_register(event_loop, token, name, pubkey),
-                Message::Send { dest, body } =>
-                    self.handle_send(event_loop, token, dest, body),
+                Message::Send { dest, body, nonce } =>
+                    self.handle_send(event_loop, token, dest, body, nonce),
                 Message::Relay { source, dest, body } =>
                     self.handle_relay(event_loop, token, source, dest, body),
                 Message::Join { channel } =>
@@ -227,7 +227,7 @@ impl Server {
     }
 
     fn handle_send(&mut self, event_loop: &mut EventLoop<Server>,
-    token: Token, dest: &[u8], body: &[u8]) {
+    token: Token, dest: &[u8], body: &[u8], nonce: &[u8]) {
         eprintln!("handle_sned");
 
         let name = {

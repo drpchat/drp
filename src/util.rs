@@ -15,7 +15,7 @@ macro_rules! eprintln {
 #[derive(Debug)]
 pub enum Message<'a> {
     Register { name: &'a [u8], pubkey: &'a [u8] },
-    Send { dest: &'a [u8], body: &'a [u8] },
+    Send { dest: &'a [u8], body: &'a [u8], nonce: &'a [u8] },
     Relay { source: &'a [u8], dest: &'a [u8], body: &'a [u8], },
     Join { channel: &'a [u8] },
     Part { channel: &'a [u8] },
@@ -27,7 +27,8 @@ pub enum Message<'a> {
 pub fn serialize<A>(msg: Message) -> Builder<HeapAllocator> {
     match msg {
         Message::Register { name, pubkey } => serialize_register(name, pubkey),
-        Message::Send { dest , body } => serialize_send(dest, body),
+        Message::Send { dest , body, nonce } =>
+            serialize_send(dest, body, nonce),
         Message::Relay { source, dest, body } =>
             serialize_relay(source, dest, body),
         Message::Join { channel } => serialize_join(channel),
@@ -49,7 +50,9 @@ pub fn serialize_register(name: &[u8], pubkey: &[u8]) -> Builder<HeapAllocator> 
     data
 }
 
-pub fn serialize_send(dest: &[u8], body: &[u8]) -> Builder<HeapAllocator> {
+pub fn serialize_send(dest: &[u8], body: &[u8], nonce: &[u8])
+    -> Builder<HeapAllocator> {
+
     let mut data = Builder::new_default();
     {
         let msg = data.init_root::<message::Builder>();
@@ -57,6 +60,7 @@ pub fn serialize_send(dest: &[u8], body: &[u8]) -> Builder<HeapAllocator> {
 
         mm.set_dest(dest);
         mm.set_body(body);
+        mm.set_nonce(nonce);
     }
     data
 }
@@ -165,6 +169,7 @@ pub fn deserialize_send<'a>(msg: message::send::Reader<'a>)
     Ok(Message::Send {
         dest: try!(msg.get_dest()),
         body: try!(msg.get_body()),
+        nonce: try!(msg.get_nonce()),
     })
 }
 
