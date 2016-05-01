@@ -242,7 +242,21 @@ fn main() {
     };    
 
     let mut serv_conn = MessageStream::new(serv_conn, ReaderOptions::default());
+    
+    // Load in public and secret keys
+    let mut pk = File::open("./pk.key").unwrap();
+    let mut pkeys = String::new();
+    pk.read_to_string(&mut pkeys).unwrap();
+    let pk = pkeys.from_hex().unwrap();
+    let pk = PublicKey::from_slice(&pk).unwrap();
+    
+    let mut sk = File::open("./sk.key").unwrap();
+    let mut skeys = String::new();
+    sk.read_to_string(&mut skeys).unwrap();
+    let sk = skeys.from_hex().unwrap();
+    let sk = SecretKey::from_slice(&sk).unwrap();
 
+    // Send Register with public key and nick
     let data = serialize_register(nick.into_bytes().as_slice());
     if let Err(e) = serv_conn.write_message(data) {
         eprintln!("Remote server not running: {}", e);
@@ -252,18 +266,6 @@ fn main() {
     event_loop.register(serv_conn.inner(), SERVCONN,
         EventSet::all(), PollOpt::empty()).unwrap();
         
-    let mut pk = File::open("./pk.key").unwrap();
-    let mut keystring = String::new();
-    pk.read_to_string(&mut keystring).unwrap();
-    let pk = keystring.from_hex().unwrap();
-    let pk = PublicKey::from_slice(&pk).unwrap();
-    
-    let mut sk = File::open("./sk.key").unwrap();
-    let mut keystring = String::new();
-    sk.read_to_string(&mut keystring).unwrap();
-    let sk = keystring.from_hex().unwrap();
-    let sk = SecretKey::from_slice(&sk).unwrap();
-
     // Start handling events
     let mut handler = Client { pipe: sock,
                                inbuf: Vec::new(),

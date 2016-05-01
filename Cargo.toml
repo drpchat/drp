@@ -17,8 +17,8 @@ name = "we"
 path = "src/we.rs"
 
 [[bin]]
-name = "uu"
-path = "src/uu.rs"
+name = "keygen"
+path = "src/keygen.rs"
 
 [build-dependencies]
 capnpc = "*"
@@ -31,3 +31,5 @@ nix = "*"
 capnp = "*"
 capnp-nonblock = "*"
 libc = "*"
+sodiumoxide = "*"
+rustc-serialize = "*"
