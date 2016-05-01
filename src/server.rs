@@ -19,6 +19,7 @@ use capnp::message::{Builder, HeapAllocator, ReaderOptions};
 use capnp_nonblock::MessageStream;
 
 use drp::util::*;
+use std::io::{Write};
 
 fn main() {
     // Create an event loop
@@ -213,6 +214,7 @@ impl Server {
 
     fn handle_register(&mut self, event_loop: &mut EventLoop<Server>,
         token: Token, name: &[u8], pubkey: &[u8]) {
+        eprintln!("handle_register");
 
         self.add_name(token, &Vec::from(name)).unwrap_or_else(|| {
             let data = serialize_response(b"dude ur not them");
@@ -222,6 +224,7 @@ impl Server {
 
     fn handle_send(&mut self, event_loop: &mut EventLoop<Server>,
     token: Token, dest: &[u8], body: &[u8]) {
+        eprintln!("handle_sned");
 
         let name = {
             let mut conn = &mut self.conns[token];
@@ -268,6 +271,7 @@ impl Server {
 
     fn handle_relay(&mut self, event_loop: &mut EventLoop<Server>,
     token: Token, source: &[u8], dest: &[u8], body: &[u8]) {
+        eprintln!("handle_relay");
         let token = *self.names.get(dest).unwrap();
         let data = serialize_relay(source, dest, body);
 
@@ -276,6 +280,7 @@ impl Server {
 
     fn handle_join(&mut self, event_loop: &mut EventLoop<Server>,
     token: Token, channel: &[u8]) {
+        eprintln!("handle_join");
 
         if let Some(name) = self.conns[token].name.clone() {
             self.name_joins(&name, &Vec::from(channel)).unwrap_or_else(|| {
@@ -290,6 +295,7 @@ impl Server {
 
     fn handle_part(&mut self, event_loop: &mut EventLoop<Server>,
     token: Token, channel: &[u8]) {
+        eprintln!("handle_part");
         
         if let Some(name) = self.conns[token].name.clone() {
             self.name_leaves(&name, &Vec::from(channel)).unwrap_or_else(|| {
@@ -304,6 +310,7 @@ impl Server {
 
     fn handle_response(&mut self, event_loop: &mut EventLoop<Server>,
     token: Token, body: &[u8]) {
+        eprintln!("handle_respo");
 
         let data = serialize_response(b"no ur a client");
         self.conns[token].write_message(event_loop, data);
@@ -311,6 +318,7 @@ impl Server {
 
     fn handle_whois(&mut self, event_loop: &mut EventLoop<Server>,
         token: Token, name: &[u8]) {
+        eprintln!("handle_whose");
 
         if let Some(id) = self.names.get(name) {
             if let Some(pubkey) = self.conns[*id].pubkey.clone() {
@@ -326,6 +334,7 @@ impl Server {
 
     fn handle_theyare(&mut self, event_loop: &mut EventLoop<Server>,
         token: Token, name: &[u8], pubkey: &[u8]) {
+        eprintln!("handle_theyare");
 
         let data = serialize_response(b"i already NEW that");
         self.conns[token].write_message(event_loop, data);
