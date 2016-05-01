@@ -31,6 +31,7 @@ use std::io::{Read, Write};
 use std::io;
 
 use std::fs::File;
+use std::collections::HashMap;
 
 use std::net::{SocketAddr, lookup_host};
 
@@ -49,6 +50,7 @@ struct Client {
     inbuf: Vec<u8>,
     seckey: SecretKey,
     pubkey: PublicKey,
+    keys: HashMap<Vec<u8>, PrecomputedKey>,
     connection: MessageStream<TcpStream>,
 }
 
@@ -115,44 +117,40 @@ impl Handler for Client {
 }
 
 impl Client {
+    fn handle_relay(&mut self, source: Vec<u8>, 
+        dest: Vec<u8>, body: Vec<u8>, nonce: Option<&[u8]>) {
+        let body = if let Some(nonce) = nonce {
+            println!("Decrypting...");
+            let prekey = self.keys.get(&source).unwrap();
+            box_::open_precomputed(&body, &Nonce::from_slice(nonce).unwrap(), &prekey).unwrap()
+        } else {
+            body
+        };
+        println!("<{}> {}", String::from_utf8(source).unwrap(), String::from_utf8(body).unwrap());
+    }
+    
+    fn handle_response(&mut self, body: Vec<u8>) {
+        println!("-!- {}", String::from_utf8(body).unwrap());
+    }
+    
+    fn handle_theyare(&mut self, name: Vec<u8>, pubkey: &[u8]) {
+        let pubkey = PublicKey::from_slice(pubkey).unwrap();
+        let prekey = box_::precompute(&pubkey, &self.seckey);
+        self.keys.insert(name.clone(), prekey);
+        println!("-!- Pubkey for {} added.", String::from_utf8(name).unwrap());
+    }
+    
     fn handle_netin<S>(&mut self, r: Reader<S>) where S: ReaderSegments {
-        let msg = r.get_root::<message::Reader>().unwrap();
-        match msg.which() {
-            Ok(message::Relay(m)) => {
-                let mut vbody = Vec::new();
-                vbody.extend_from_slice(m.get_body().unwrap());
-                let body = from_utf8(&vbody).unwrap();
-            
-                let mut vsource = Vec::new();
-                vsource.extend_from_slice(m.get_source().unwrap());
-                let source = from_utf8(&vsource).unwrap();
-            
-                println!("<{}> {}", source, body);
-            },
-            Ok(message::Response(m)) => {
-                let mut vbody = Vec::new();
-                vbody.extend_from_slice(m.get_body().unwrap());
-                let body = from_utf8(&vbody).unwrap();
-                println!("-!- {}", body);
-            },
-            Ok(message::Theyare(m)) => {
-                let mut vname = Vec::new();
-                vname.extend_from_slice(m.get_name().unwrap());
-                let name = from_utf8(&vname).unwrap();
-            
-                let mut vpubkey = Vec::new();
-                vpubkey.extend_from_slice(m.get_pubkey().unwrap());
-                let pubkey = from_utf8(&vpubkey).unwrap();
-            
-                println!("-!- Pubkey for {}: {}", name, pubkey);
-            },
-            Ok(_) => {
-                println!("no relay?");
-            },
-            Err(e) => {
-                panic!("Client: network message error");
-            },
-        }
+        match deserialize(&r).unwrap() {
+            Message::Relay { source, dest, body, nonce } =>
+                self.handle_relay(Vec::from(source), 
+                     Vec::from(dest), Vec::from(body), nonce),
+            Message::Response { body } =>
+                self.handle_response(Vec::from(body)),
+            Message::Theyare { name, pubkey } =>
+                self.handle_theyare(Vec::from(name), pubkey),
+            _ => (),
+        }    
     }
 
     // len is the amount of the buffer we actually filled up
@@ -177,18 +175,28 @@ impl Client {
                             },
                         b"/msg" | b"/m" | b"/send" => {
                             eprintln!("Message Sent.");
-                            let body = inputs[2];
-                            serialize_send(target, body)
+                            let mut body = inputs[2];
+                            let mut nontion = None;
+                            if self.keys.contains_key(target) {
+                                println!("Sending message encrypted");
+                                let nonce = box_::gen_nonce();
+                                body = &box_::seal_precomputed(body, &nonce, 
+                                    &self.keys.get(target).unwrap());
+                                nontion = Some(&nonce.0);
+                            }
+                            serialize_send(target, body, nontion)
                             },
                         b"/whois" | b"/w" => {
+                            eprintln!("Whois guy");
                             serialize_whois(target)
                             },
                         _ => {
-                            println!("Sending message to {}", String::from_utf8(Vec::from(cmd)).unwrap());
+                            println!("Sending message to {}", 
+                                String::from_utf8(Vec::from(cmd)).unwrap());
                             let mut body = Vec::from(target);
                             let target = cmd;
                             body.extend_from_slice(inputs[2]);
-                            serialize_send(target, &body)
+                            serialize_send(target, &body, None)
                         }
                     };
 
@@ -271,6 +279,7 @@ fn main() {
                                inbuf: Vec::new(),
                                seckey: sk,
                                pubkey: pk,
+                               keys: HashMap::new(),
                                connection: serv_conn, };
 
     writeln!(std::io::stderr(), "Main Loop: Connected & Running").unwrap();
