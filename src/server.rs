@@ -84,13 +84,16 @@ impl Server {
     }
 
     // a new user is trying to register - add them to the db
-    fn add_name(&mut self, token: Token, name: &Vec<u8>) -> Option<()> {
+    fn add_name(&mut self, token: Token, name: &Vec<u8>, pubkey: &Vec<u8>)
+        -> Option<()> {
+
         if self.names.contains_key(name) {
             return None
         }
 
         self.names.insert(name.clone(), token);
         self.conns[token].name = Some(name.clone()); // TODO deal with nick changes
+        self.conns[token].pubkey = Some(pubkey.clone()); // TODO deal with nick changes
 
         return Some(())
     }
@@ -216,7 +219,8 @@ impl Server {
         token: Token, name: &[u8], pubkey: &[u8]) {
         eprintln!("handle_register");
 
-        self.add_name(token, &Vec::from(name)).unwrap_or_else(|| {
+        self.add_name(token, &Vec::from(name), &Vec::from(pubkey))
+            .unwrap_or_else(|| {
             let data = serialize_response(b"dude ur not them");
             self.conns[token].write_message(event_loop, data);
         });
@@ -321,7 +325,9 @@ impl Server {
         eprintln!("handle_whose");
 
         if let Some(id) = self.names.get(name) {
+            eprintln!(" got name");
             if let Some(pubkey) = self.conns[*id].pubkey.clone() {
+                eprintln!(" got pubkey");
                 let data = serialize_theyare(name, &pubkey);
                 self.conns[token].write_message(event_loop, data);
                 return;
