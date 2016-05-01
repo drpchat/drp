@@ -197,8 +197,8 @@ impl Server {
                     self.handle_register(event_loop, token, name, pubkey),
                 Message::Send { dest, body, nonce } =>
                     self.handle_send(event_loop, token, dest, body, nonce),
-                Message::Relay { source, dest, body } =>
-                    self.handle_relay(event_loop, token, source, dest, body),
+                Message::Relay { source, dest, body, nonce } =>
+                    self.handle_relay(event_loop, token, source, dest, body, nonce),
                 Message::Join { channel } =>
                     self.handle_join(event_loop, token, channel),
                 Message::Part { channel } =>
@@ -227,7 +227,7 @@ impl Server {
     }
 
     fn handle_send(&mut self, event_loop: &mut EventLoop<Server>,
-    token: Token, dest: &[u8], body: &[u8], nonce: &[u8]) {
+    token: Token, dest: &[u8], body: &[u8], nonce: Option<&[u8]>) {
         eprintln!("handle_sned");
 
         let name = {
@@ -254,7 +254,7 @@ impl Server {
                     .expect("couldn't resolve dest");
 
                 let data = serialize_relay(name.as_slice(),
-                    dest, body);
+                    dest, body, nonce);
 
                 self.conns[token].write_message(event_loop, data);
             }
@@ -267,17 +267,18 @@ impl Server {
                 .expect("couldn't resolve dest");
 
             let data = serialize_relay(name.as_slice(),
-                dest, body);
+                dest, body, nonce);
 
             self.conns[token].write_message(event_loop, data);
         }
     }
 
     fn handle_relay(&mut self, event_loop: &mut EventLoop<Server>,
-    token: Token, source: &[u8], dest: &[u8], body: &[u8]) {
+    token: Token, source: &[u8], dest: &[u8], body: &[u8],
+    nonce: Option<&[u8]>) {
         eprintln!("handle_relay");
         let token = *self.names.get(dest).unwrap();
-        let data = serialize_relay(source, dest, body);
+        let data = serialize_relay(source, dest, body, nonce);
 
         self.conns[token].write_message(event_loop, data);
     }

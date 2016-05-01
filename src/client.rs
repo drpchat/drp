@@ -198,7 +198,7 @@ impl Client {
                     } else if recept == b"part" {
                         serialize_part(body)
                     } else {
-                        serialize_send(recept, body, b"")
+                        serialize_send(recept, body, None)
                     };
                     self.connection.write_message(data).unwrap();
 

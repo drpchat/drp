@@ -15,8 +15,9 @@ macro_rules! eprintln {
 #[derive(Debug)]
 pub enum Message<'a> {
     Register { name: &'a [u8], pubkey: &'a [u8] },
-    Send { dest: &'a [u8], body: &'a [u8], nonce: &'a [u8] },
-    Relay { source: &'a [u8], dest: &'a [u8], body: &'a [u8], },
+    Send { dest: &'a [u8], body: &'a [u8], nonce: Option<&'a [u8]> },
+    Relay { source: &'a [u8], dest: &'a [u8], body: &'a [u8],
+        nonce: Option<&'a [u8]> },
     Join { channel: &'a [u8] },
     Part { channel: &'a [u8] },
     Response { body: &'a [u8] },
@@ -29,8 +30,8 @@ pub fn serialize<A>(msg: Message) -> Builder<HeapAllocator> {
         Message::Register { name, pubkey } => serialize_register(name, pubkey),
         Message::Send { dest , body, nonce } =>
             serialize_send(dest, body, nonce),
-        Message::Relay { source, dest, body } =>
-            serialize_relay(source, dest, body),
+        Message::Relay { source, dest, body, nonce } =>
+            serialize_relay(source, dest, body, nonce),
         Message::Join { channel } => serialize_join(channel),
         Message::Part { channel } => serialize_part(channel),
         Message::Response { body } => serialize_response(body),
@@ -50,7 +51,7 @@ pub fn serialize_register(name: &[u8], pubkey: &[u8]) -> Builder<HeapAllocator> 
     data
 }
 
-pub fn serialize_send(dest: &[u8], body: &[u8], nonce: &[u8])
+pub fn serialize_send(dest: &[u8], body: &[u8], nonce: Option<&[u8]>)
     -> Builder<HeapAllocator> {
 
     let mut data = Builder::new_default();
@@ -60,12 +61,16 @@ pub fn serialize_send(dest: &[u8], body: &[u8], nonce: &[u8])
 
         mm.set_dest(dest);
         mm.set_body(body);
-        mm.set_nonce(nonce);
+        match nonce {
+            None => mm.set_unencrypted(()),
+            Some(nonce) => mm.set_nonce(nonce),
+        }
     }
     data
 }
 
-pub fn serialize_relay(source: &[u8], dest: &[u8], body: &[u8]) -> Builder<HeapAllocator> {
+pub fn serialize_relay(source: &[u8], dest: &[u8], body: &[u8],
+    nonce: Option<&[u8]>) -> Builder<HeapAllocator> {
     let mut data = Builder::new_default();
     {
         let msg = data.init_root::<message::Builder>();
@@ -74,6 +79,10 @@ pub fn serialize_relay(source: &[u8], dest: &[u8], body: &[u8]) -> Builder<HeapA
         mm.set_source(source);
         mm.set_dest(dest);
         mm.set_body(body);
+        match nonce {
+            Some(nonce) => mm.set_nonce(nonce),
+            None => mm.set_unencrypted(()),
+        }
     }
     data
 }
@@ -169,7 +178,12 @@ pub fn deserialize_send<'a>(msg: message::send::Reader<'a>)
     Ok(Message::Send {
         dest: try!(msg.get_dest()),
         body: try!(msg.get_body()),
-        nonce: try!(msg.get_nonce()),
+
+        nonce: try!(match msg.which() {
+            Ok(message::send::Nonce(msg)) => msg.map(Some),
+            Ok(message::send::Unencrypted(())) => Ok(None),
+            Err(e) => Err(Error::from(e)),
+        }),
     })
 }
 
@@ -180,6 +194,12 @@ pub fn deserialize_relay<'a>(msg: message::relay::Reader<'a>)
         source: try!(msg.get_source()),
         dest: try!(msg.get_dest()),
         body: try!(msg.get_body()),
+
+        nonce: try!(match msg.which() {
+            Ok(message::relay::Nonce(msg)) => msg.map(Some),
+            Ok(message::relay::Unencrypted(())) => Ok(None),
+            Err(e) => Err(Error::from(e)),
+        }),
     })
 }
 

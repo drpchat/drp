@@ -10,7 +10,10 @@ struct Message {
         send :group {
             dest @1 :Data;
             body @2 :Data;
-            nonce @13 :Data;
+            union {
+                nonce @13 :Data;
+                unencrypted @14 :Void;
+            }
         }
 
 
@@ -41,6 +44,10 @@ struct Message {
             source @3 :Data;
             dest @4 :Data;
             body @5 :Data;
+            union {
+                nonce @15 :Data;
+                unencrypted @16 :Void;
+            }
         }
     }
 }
