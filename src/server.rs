@@ -119,21 +119,15 @@ impl Server {
 
     // a user is leaving a channel
     fn name_leaves(&mut self, name: &Vec<u8>, channel: &Vec<u8>) -> Option<()> {
-        eprintln!("A: {:?}", self.channels.clone());
-        {
-
         // remove name from channel
         let mut chans = match self.channels.get_mut(channel) {
             None => return None,
             Some(chans) => chans,
         };
 
-        // failing in some cases ??
-        chans.remove(name);
-
+        if !chans.remove(name) {
+            return None;
         }
-
-        eprintln!("B: {:?}", self.channels.clone());
 
         // remove channel from name
         let token = self.names[name];
