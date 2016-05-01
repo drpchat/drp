@@ -265,7 +265,7 @@ fn main() {
 
     let mut free_irc = MessageStream::new(free_irc, ReaderOptions::default());
 
-    let data = serialize_register(nick.into_bytes().as_slice());
+    let data = serialize_register(nick.into_bytes().as_slice(), b"");
     free_irc.write_message(data).unwrap();
 
     event_loop.register(free_irc.inner(), FOONETIC,
