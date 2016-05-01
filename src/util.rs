@@ -108,17 +108,13 @@ pub fn serialize_response(body: &[u8]) -> Builder<HeapAllocator> {
 }
 
 pub fn serialize_whois(name: &[u8]) -> Builder<HeapAllocator> {
-    //let mut data = Builder::new_default();
-    //{
-    //    let msg = data.init_root::<message::Builder>();
-    //    let mut mm = msg.init_whois();
-
-    //    mm.set_name(name);
-    //}
-    //data
-
     let mut data = Builder::new_default();
-    data.init_root::<message::whois::Builder>().set_name(name);
+    {
+        let msg = data.init_root::<message::Builder>();
+        let mut mm = msg.init_whois();
+
+        mm.set_name(name);
+    }
     data
 }
 
