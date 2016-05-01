@@ -122,8 +122,7 @@ impl Server {
     // a user is leaving a channel
     fn name_leaves(&mut self, name: &Vec<u8>, channel: &Vec<u8>) -> Option<()> {
         // remove name from channel
-        let mut chans = self.channels.get_mut(channel);
-        let mut chans = match chans {
+        let mut chans = match self.channels.get_mut(channel) {
             None => return None,
             Some(chans) => chans,
         };
