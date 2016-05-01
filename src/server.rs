@@ -331,6 +331,10 @@ impl Server {
                 let data = serialize_theyare(name, &pubkey);
                 self.conns[token].write_message(event_loop, data);
                 return;
+
+                // TODO this should be more explicit in the protocol
+                let data = serialize_theyare(name, &self.conns[token].pubkey.clone().unwrap());
+                self.conns[*id].write_message(event_loop, data);
             }
         }
 
