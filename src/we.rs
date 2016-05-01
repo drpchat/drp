@@ -180,7 +180,7 @@ impl Client {
                             let body = inputs[2];
                             serialize_send(target, body)
                             },
-                        b"/whois" | "/w" => {
+                        b"/whois" | b"/w" => {
                             serialize_whois(target)
                             },
                         _ => {
@@ -247,8 +247,8 @@ fn main() {
     let mut pk = File::open("./pk.key").unwrap();
     let mut pkeys = String::new();
     pk.read_to_string(&mut pkeys).unwrap();
-    let pk = pkeys.from_hex().unwrap();
-    let pk = PublicKey::from_slice(&pk).unwrap();
+    let pkeys = pkeys.from_hex().unwrap();
+    let pk = PublicKey::from_slice(&pkeys).unwrap();
     
     let mut sk = File::open("./sk.key").unwrap();
     let mut skeys = String::new();
@@ -257,7 +257,7 @@ fn main() {
     let sk = SecretKey::from_slice(&sk).unwrap();
 
     // Send Register with public key and nick
-    let data = serialize_register(nick.into_bytes().as_slice());
+    let data = serialize_register(nick.into_bytes().as_slice(), &pkeys);
     if let Err(e) = serv_conn.write_message(data) {
         eprintln!("Remote server not running: {}", e);
         return; // TODO But why though?
