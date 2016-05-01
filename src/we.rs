@@ -168,28 +168,28 @@ impl Client {
                         b"/join" | b"/j" => {
                             println!("Channel Joined."); // Make it show the channel name
                             serialize_join(target)
-                            },
+                        },
                         b"/part" | b"/p" => {
                             println!("Channel Parted."); // Make it show the channel name
                             serialize_part(target)
-                            },
+                        },
                         b"/msg" | b"/m" | b"/send" => {
                             eprintln!("Message Sent.");
-                            let mut body = inputs[2];
-                            let mut nontion = None;
                             if self.keys.contains_key(target) {
                                 println!("Sending message encrypted");
                                 let nonce = box_::gen_nonce();
-                                body = &box_::seal_precomputed(body, &nonce, 
+                                let body = &box_::seal_precomputed(inputs[2], &nonce, 
                                     &self.keys.get(target).unwrap());
-                                nontion = Some(&nonce.0);
+                                let nonce: &[u8] = &nonce.0;
+                                serialize_send(target, body, Some(nonce))
+                            } else {
+                                serialize_send(target, inputs[2], None)
                             }
-                            serialize_send(target, body, nontion)
-                            },
+                        },
                         b"/whois" | b"/w" => {
                             eprintln!("Whois guy");
                             serialize_whois(target)
-                            },
+                        },
                         _ => {
                             println!("Sending message to {}", 
                                 String::from_utf8(Vec::from(cmd)).unwrap());
@@ -197,7 +197,7 @@ impl Client {
                             let target = cmd;
                             body.extend_from_slice(inputs[2]);
                             serialize_send(target, &body, None)
-                        }
+                        },
                     };
 
                     self.connection.write_message(data).unwrap();
