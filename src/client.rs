@@ -74,7 +74,6 @@ struct Client {
 
     connection: MessageStream<TcpStream>,
     scroll: VecDeque<Vec<u8>>,
-    outbuf: Vec<u8>,
 }
 
 impl Handler for Client {
@@ -273,7 +272,7 @@ fn main() {
 
     // Start handling events
     let mut handler = Client { pipe: sock, //foon: irc,
-                               inbuf: Vec::new(), outbuf: Vec::new(),
+                               inbuf: Vec::new(),
                                connection: free_irc,
                                scroll: VecDeque::new(), };
 
