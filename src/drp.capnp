@@ -4,6 +4,7 @@ struct Message {
     union {
         register :group {
             name @0 :Data;
+            pubkey @12 :Data;
         }
 
         send :group {

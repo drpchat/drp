@@ -14,7 +14,7 @@ macro_rules! eprintln {
 // todo: use bytes instead of string
 #[derive(Debug)]
 pub enum Message<'a> {
-    Register { name: &'a [u8] },
+    Register { name: &'a [u8], pubkey: &'a [u8] },
     Send { dest: &'a [u8], body: &'a [u8] },
     Relay { source: &'a [u8], dest: &'a [u8], body: &'a [u8], },
     Join { channel: &'a [u8] },
@@ -26,27 +26,26 @@ pub enum Message<'a> {
 
 pub fn serialize<A>(msg: Message) -> Builder<HeapAllocator> {
     match msg {
-        Message::Register { name } => serialize_register(name),
-        Message::Send { dest , body } =>
-            serialize_send(dest, body),
+        Message::Register { name, pubkey } => serialize_register(name, pubkey),
+        Message::Send { dest , body } => serialize_send(dest, body),
         Message::Relay { source, dest, body } =>
             serialize_relay(source, dest, body),
-        Message::Join { channel } =>
-            serialize_join(channel),
-        Message::Part { channel } =>
-            serialize_part(channel),
-        Message::Response { body } =>
-            serialize_response(body),
-        Message::Whois { name } =>
-            serialize_whois(name),
-        Message::Theyare { name, pubkey } =>
-            serialize_theyare(name, pubkey),
+        Message::Join { channel } => serialize_join(channel),
+        Message::Part { channel } => serialize_part(channel),
+        Message::Response { body } => serialize_response(body),
+        Message::Whois { name } => serialize_whois(name),
+        Message::Theyare { name, pubkey } => serialize_theyare(name, pubkey),
     }
 }
 
-pub fn serialize_register(name: &[u8]) -> Builder<HeapAllocator> {
+pub fn serialize_register(name: &[u8], pubkey: &[u8]) -> Builder<HeapAllocator> {
     let mut data = Builder::new_default();
-    data.init_root::<message::register::Builder>().set_name(name);
+    {
+        let msg = data.init_root::<message::Builder>();
+        let mut mm = msg.init_register();
+        mm.set_name(name);
+        mm.set_pubkey(pubkey);
+    }
     data
 }
 
@@ -158,7 +157,10 @@ pub fn deserialize<'a, S>(msg: &'a Reader<S>) -> Result<Message<'a>>
 pub fn deserialize_register<'a>(msg: message::register::Reader<'a>)
     -> Result<Message<'a>> {
 
-    Ok(Message::Register { name: try!(msg.get_name()) })
+    Ok(Message::Register {
+        name: try!(msg.get_name()),
+        pubkey: try!(msg.get_pubkey()),
+    })
 }
 
 pub fn deserialize_send<'a>(msg: message::send::Reader<'a>)
