@@ -5,6 +5,8 @@ extern crate nix;
 extern crate capnp;
 extern crate capnp_nonblock;
 
+extern crate rustc_serialize;
+
 #[macro_use]
 extern crate drp;
 
@@ -15,6 +17,7 @@ use mio::util::Slab;
 use std::str::FromStr;
 use std::collections::{HashMap, HashSet};
 
+use rustc_serialize::hex::*;
 use capnp::message::{Builder, HeapAllocator, ReaderOptions};
 use capnp_nonblock::MessageStream;
 
@@ -212,9 +215,9 @@ impl Server {
 
     fn handle_register(&mut self, event_loop: &mut EventLoop<Server>,
         token: Token, name: &[u8], pubkey: &[u8]) {
-        eprintln!("registering: <{}> with key {}",
+        eprintln!("Registering <{}> with key:\n{}",
             String::from_utf8_lossy(name),
-            String::from_utf8_lossy(pubkey));
+            pubkey.to_hex());
 
         self.add_name(token, &Vec::from(name), &Vec::from(pubkey))
             .unwrap_or_else(|| {

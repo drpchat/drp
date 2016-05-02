@@ -47,7 +47,7 @@ struct Client {
     pipe: PipeReader,
     inbuf: Vec<u8>,
     seckey: SecretKey,
-    pubkey: PublicKey,
+    //pubkey: PublicKey,
     keys: HashMap<Vec<u8>, PrecomputedKey>,
     connection: MessageStream<TcpStream>,
 }
@@ -72,7 +72,7 @@ impl Handler for Client {
                 let mut buf = vec![0; 512];
 
                 match self.pipe.read(&mut buf) {
-                    Ok(n) => self.handle_stdin(&buf, n, event_loop),
+                    Ok(n) => self.stdinput(&buf, n, event_loop),
 
                     Err(bad) => {
                         eprintln!("Event: stdin read error {}", bad);
@@ -95,7 +95,7 @@ impl Handler for Client {
                 if let Some(r) = self.connection.read_message()
                     .unwrap_or_else(|e| panic!("Event: capnproto error: ({})", e)) {
 
-                    self.handle_netin(r);
+                    self.netinput(r);
                 } else {
                     //writeln!(std::io::stderr(), "Event: partial message").unwrap();
                 }
@@ -120,11 +120,13 @@ impl Client {
         let body = if let Some(nonce) = nonce {
             println!("Decrypting...");
             let prekey = self.keys.get(&source).unwrap();
-            box_::open_precomputed(&body, &Nonce::from_slice(nonce).unwrap(), &prekey).unwrap()
+            box_::open_precomputed(&body, 
+                &Nonce::from_slice(nonce).unwrap(), &prekey).unwrap()
         } else {
             body
         };
-        println!("<{}> {}", String::from_utf8(source).unwrap(), String::from_utf8(body).unwrap());
+        println!("<{}> {}", String::from_utf8(source).unwrap(), 
+            String::from_utf8(body).unwrap());
     }
     
     fn handle_response(&mut self, body: Vec<u8>) {
@@ -135,10 +137,11 @@ impl Client {
         let pubkey = PublicKey::from_slice(pubkey).unwrap();
         let prekey = box_::precompute(&pubkey, &self.seckey);
         self.keys.insert(name.clone(), prekey);
-        println!("-!- Pubkey for {} added.", String::from_utf8(name).unwrap());
+        println!("-!- Key for {}:\n{}", String::from_utf8(name).unwrap(), 
+            pubkey.0.to_hex());
     }
     
-    fn handle_netin<S>(&mut self, r: Reader<S>) where S: ReaderSegments {
+    fn netinput<S>(&mut self, r: Reader<S>) where S: ReaderSegments {
         match deserialize(&r).unwrap() {
             Message::Relay { source, dest, body, nonce } =>
                 self.handle_relay(Vec::from(source), 
@@ -152,29 +155,32 @@ impl Client {
     }
 
     // len is the amount of the buffer we actually filled up
-    fn handle_stdin(&mut self, buf: &Vec<u8>, len: usize, event_loop: &mut EventLoop<Client>) {
+    fn stdinput(&mut self, buf: &Vec<u8>, len: usize, event_loop: &mut EventLoop<Client>) {
         for i in 0..len {
             match buf[i] {
                 b'\n' => { // this is what return does ?
                     let inputs = self.inbuf.clone();
-                    let inputs: Vec<&[u8]> = inputs.splitn(3, |x| *x == 32).collect();
+                    let inputs: Vec<&[u8]> = 
+                        inputs.splitn(3, |x| *x == 32).collect();
 
                     let cmd = inputs[0];
                     let target = inputs[1];
                     
                     let data = match cmd {
                         b"/join" | b"/j" => {
-                            println!("Channel Joined."); // Make it show the channel name
+                            println!("Joining {}",
+                                String::from_utf8(Vec::from(target)).unwrap());
                             serialize_join(target)
                         },
                         b"/part" | b"/p" => {
-                            println!("Channel Parted."); // Make it show the channel name
+                            println!("Leaving {}",
+                                String::from_utf8(Vec::from(target)).unwrap());
                             serialize_part(target)
                         },
                         b"/msg" | b"/m" | b"/send" => {
                             eprintln!("Message Sent.");
                             if self.keys.contains_key(target) {
-                                println!("Sending message encrypted");
+                                println!("Sending encrypted message...");
                                 let nonce = box_::gen_nonce();
                                 let body = &box_::seal_precomputed(inputs[2], &nonce, 
                                     &self.keys.get(target).unwrap());
@@ -185,7 +191,7 @@ impl Client {
                             }
                         },
                         b"/whois" | b"/w" => {
-                            eprintln!("Whois guy");
+                            eprintln!("Whois Sent.");
                             serialize_whois(target)
                         },
                         _ => {
@@ -216,7 +222,7 @@ impl Client {
     }
 }
 
-// TODO this function is a piece of fucking shit
+// TODO This function is am awful mess
 fn connect(host: &str, port: u16) -> io::Result<TcpStream> {
     TcpStream::connect(
         &SocketAddr::new(
@@ -227,19 +233,18 @@ fn connect(host: &str, port: u16) -> io::Result<TcpStream> {
 
 fn main() {
     let nick = env::args().nth(1).unwrap();
-    let ip = env::args().nth(2).unwrap();
+    let server = env::args().nth(2).unwrap();
 
     // Create an event loop
     let mut event_loop = EventLoop::new().unwrap();
 
-    // register stdin
+    // Register stdin event handler
     let sock = unsafe { PipeReader::from_raw_fd(0) };
     event_loop.register(&sock, STDIN,
         EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
 
-    // register and connect to server
-    // Outofthy.me: 104.131.118.79
-    let serv_conn = match connect(&ip, 8765) {
+    // Connect to server
+    let serv_conn = match connect(&server, 8765) {
         Ok(conn) => conn,
         Err(e) => {
             eprintln!("Remote server not running: {}", e);
@@ -247,8 +252,6 @@ fn main() {
         },
     };    
 
-    let mut serv_conn = MessageStream::new(serv_conn, ReaderOptions::default());
-    
     // Load in public and secret keys
     let mut pk = File::open("./pk.key").unwrap();
     let mut pkeys = String::new();
@@ -262,21 +265,23 @@ fn main() {
     let sk = skeys.from_hex().unwrap();
     let sk = SecretKey::from_slice(&sk).unwrap();
 
-    // Send Register with public key and nick
+    // Register server event handler
+    let mut serv_conn = MessageStream::new(serv_conn, ReaderOptions::default());
+    event_loop.register(serv_conn.inner(), SERVCONN, 
+        EventSet::all(), PollOpt::empty()).unwrap();
+
+    // Send Register message with public key and nick
     let data = serialize_register(nick.into_bytes().as_slice(), &pkeys);
     if let Err(e) = serv_conn.write_message(data) {
         eprintln!("Remote server not running: {}", e);
         return; // TODO But why though?
     };
-
-    event_loop.register(serv_conn.inner(), SERVCONN,
-        EventSet::all(), PollOpt::empty()).unwrap();
-        
-    // Start handling events
+            
+    // Create handler object and run it
     let mut handler = Client { pipe: sock,
                                inbuf: Vec::new(),
                                seckey: sk,
-                               pubkey: pk,
+                               //pubkey: pk,
                                keys: HashMap::new(),
                                connection: serv_conn, };
 
