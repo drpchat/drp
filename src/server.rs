@@ -13,7 +13,7 @@ use mio::tcp::{TcpListener, TcpStream};
 use mio::util::Slab;
 
 use std::str::FromStr;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use capnp::message::{Builder, HeapAllocator, ReaderOptions};
 use capnp_nonblock::MessageStream;
@@ -40,7 +40,7 @@ struct Connection {
 
     name: Option<Vec<u8>>,
     pubkey: Option<Vec<u8>>,
-    channels: Vec<Vec<u8>>,
+    channels: HashSet<Vec<u8>>,
 }
 
 impl Connection {
@@ -48,8 +48,6 @@ impl Connection {
     // handler will unset the writable event once our message is actually sent
     fn write_message(&mut self, event_loop: &mut EventLoop<Server>,
         msg: Builder<HeapAllocator>) {
-
-        println!("writing");
 
         self.sock.write_message(msg).unwrap();
         event_loop.reregister(self.sock.inner(), self.token,
@@ -69,7 +67,7 @@ struct Server {
 
     names: HashMap<Vec<u8>, Token>,
     conns: Slab<Connection>,
-    channels: HashMap<Vec<u8>, Vec<Vec<u8>>>,
+    channels: HashMap<Vec<u8>, HashSet<Vec<u8>>>,
 }
 
 impl Server {
@@ -105,16 +103,16 @@ impl Server {
         //}
 
         // add name to channel
-        let chan = self.channels.entry(channel.clone()).or_insert(Vec::new());
+        let chan = self.channels.entry(channel.clone()).or_insert(HashSet::new());
         if chan.contains(name) {
             return None
         } else {
-            chan.push(name.clone());
+            chan.insert(name.clone());
         }
 
         // add channel to name
         let token = self.names[name];
-        self.conns[token].channels.push(channel.clone());
+        self.conns[token].channels.insert(channel.clone());
 
         Some(())
     }
@@ -127,15 +125,13 @@ impl Server {
             Some(chans) => chans,
         };
 
-        if let Ok(i) = chans.binary_search(&name) {
-            chans.remove(i);
+        if !chans.remove(name) {
+            return None;
         }
 
         // remove channel from name
         let token = self.names[name];
-        if let Ok(i) = self.conns[token].channels.binary_search(&channel) {
-            self.conns[token].channels.remove(i);
-        } else {
+        if !self.conns[token].channels.remove(channel) {
             return None;
         }
 
@@ -157,13 +153,13 @@ impl Server {
                 match s {
                     Some(so) => so.0,
                     None => {
-                        println!("sock error of kind b");
+                        println!("socket error of kind b");
                         return;
                     },
                 }
             },
             Err(_) => {
-                println!("sock error of kind a");
+                println!("socket error of kind a");
                 return;
             },
         };
@@ -172,7 +168,7 @@ impl Server {
             sock: MessageStream::new(sock, ReaderOptions::default()),
             token: token,
             name: None, pubkey: None,
-            channels: Vec::new() }) {
+            channels: HashSet::new() }) {
 
             Some(token) => {
                 // register the guy
@@ -181,7 +177,7 @@ impl Server {
                     PollOpt::empty()).unwrap();
             },
             None => {
-                println!("failed to make new connect");
+                println!("failed to make new connection");
             },
         }
     }
@@ -210,13 +206,15 @@ impl Server {
                     self.handle_theyare(event_loop, token, name, pubkey),
             }
         } else {
-            println!("nope, let's go");
+            //println!("nope, let's go");
         }
     }
 
     fn handle_register(&mut self, event_loop: &mut EventLoop<Server>,
         token: Token, name: &[u8], pubkey: &[u8]) {
-        eprintln!("handle_register");
+        eprintln!("registering: <{}> with key {}",
+            String::from_utf8_lossy(name),
+            String::from_utf8_lossy(pubkey));
 
         self.add_name(token, &Vec::from(name), &Vec::from(pubkey))
             .unwrap_or_else(|| {
@@ -227,8 +225,6 @@ impl Server {
 
     fn handle_send(&mut self, event_loop: &mut EventLoop<Server>,
     token: Token, dest: &[u8], body: &[u8], nonce: Option<&[u8]>) {
-        eprintln!("handle_sned");
-
         let name = {
             let mut conn = &mut self.conns[token];
             match conn.name.clone() {
@@ -241,13 +237,17 @@ impl Server {
             }
         };
 
-        println!("dest: {:?}", dest);
+        eprintln!("sending: {} -> {}: {:?}",
+            String::from_utf8(name.clone()).unwrap(),
+            String::from_utf8_lossy(dest),
+            String::from_utf8_lossy(body));
 
         if let Some(chanlist) = self.channels.get(dest) {
-            println!("chanlist: {:?}", chanlist);
             for dest in chanlist {
-                println!("putting to {:?}",
-                    String::from_utf8(dest.clone()).unwrap());
+                eprintln!("sending: {} -> {}: {:?}",
+                    String::from_utf8(name.clone()).unwrap(),
+                    String::from_utf8(dest.clone()).unwrap(),
+                    String::from_utf8_lossy(body));
 
                 let token = *self.names.get(dest)
                     .expect("couldn't resolve dest");
@@ -258,10 +258,6 @@ impl Server {
                 self.conns[token].write_message(event_loop, data);
             }
         } else {
-            println!("doing a lil guy");
-            println!("||| {:?} -> {:?}",
-                String::from_utf8(name.clone()).unwrap(),
-                String::from_utf8(Vec::from(dest)).unwrap());
             let token = *self.names.get(dest)
                 .expect("couldn't resolve dest");
 
@@ -275,7 +271,7 @@ impl Server {
     fn handle_relay(&mut self, event_loop: &mut EventLoop<Server>,
     token: Token, source: &[u8], dest: &[u8], body: &[u8],
     nonce: Option<&[u8]>) {
-        eprintln!("handle_relay");
+        eprintln!("handling relay");
         let token = *self.names.get(dest).unwrap();
         let data = serialize_relay(source, dest, body, nonce);
 
@@ -284,9 +280,11 @@ impl Server {
 
     fn handle_join(&mut self, event_loop: &mut EventLoop<Server>,
     token: Token, channel: &[u8]) {
-        eprintln!("handle_join");
-
         if let Some(name) = self.conns[token].name.clone() {
+            eprintln!("joining: {} -> {}",
+                String::from_utf8(name.clone()).unwrap(),
+                String::from_utf8_lossy(channel));
+
             self.name_joins(&name, &Vec::from(channel)).unwrap_or_else(|| {
                 let data = serialize_response(b"you're already there!!");
                 self.conns[token].write_message(event_loop, data);
@@ -299,9 +297,11 @@ impl Server {
 
     fn handle_part(&mut self, event_loop: &mut EventLoop<Server>,
     token: Token, channel: &[u8]) {
-        eprintln!("handle_part");
-        
         if let Some(name) = self.conns[token].name.clone() {
+            eprintln!("parting: {} -> {}",
+                String::from_utf8(name.clone()).unwrap(),
+                String::from_utf8_lossy(channel));
+
             self.name_leaves(&name, &Vec::from(channel)).unwrap_or_else(|| {
                 let data = serialize_response(b"you're not even there!!");
                 self.conns[token].write_message(event_loop, data);
@@ -314,7 +314,7 @@ impl Server {
 
     fn handle_response(&mut self, event_loop: &mut EventLoop<Server>,
     token: Token, body: &[u8]) {
-        eprintln!("handle_respo");
+        eprintln!("handle_response");
 
         let data = serialize_response(b"no ur a client");
         self.conns[token].write_message(event_loop, data);
@@ -322,12 +322,13 @@ impl Server {
 
     fn handle_whois(&mut self, event_loop: &mut EventLoop<Server>,
         token: Token, name: &[u8]) {
-        eprintln!("handle_whose");
+        eprintln!("handle_whois");
 
         if let Some(id) = self.names.get(name) {
-            eprintln!(" got name");
+            eprintln!("  got name: {}", String::from_utf8_lossy(name));
+
             if let Some(pubkey) = self.conns[*id].pubkey.clone() {
-                eprintln!(" got pubkey");
+                eprintln!("  got pubkey: {}", String::from_utf8_lossy(&pubkey));
                 let data = serialize_theyare(name, &pubkey);
                 self.conns[token].write_message(event_loop, data);
 
@@ -393,7 +394,6 @@ impl Handler for Server {
 
         if events.is_writable() {
             assert!(token != self.token);
-            println!("gotta write fast");
 
             self.conns[token].sock.write().unwrap();
 
