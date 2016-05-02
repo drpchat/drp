@@ -15,7 +15,7 @@ extern crate drp;
 use capnp::message::{Reader, ReaderSegments, ReaderOptions};
 use capnp_nonblock::MessageStream;
 
-use drp::message;
+//use drp::message;
 use drp::util::*;
 
 use mio::*;
@@ -70,19 +70,17 @@ impl Handler for Client {
 
             if event.is_readable() {
                 let mut buf = vec![0; 512];
-
                 match self.pipe.read(&mut buf) {
                     Ok(n) => self.stdinput(&buf, n, event_loop),
-
-                    Err(bad) => {
-                        eprintln!("Event: stdin read error {}", bad);
+                    Err(e) => {
+                        eprintln!("Event: stdin read error {}", e);
                         event_loop.shutdown();
                     },
                 }
             }
         } else {
             if event.is_hup() {
-                eprintln!("Event: Server closed connection, exiting");
+                println!("Server closed connection, exiting...");
                 event_loop.shutdown();
                 return;
             } else if event.is_error() {
@@ -94,7 +92,6 @@ impl Handler for Client {
             if event.is_readable() {
                 if let Some(r) = self.connection.read_message()
                     .unwrap_or_else(|e| panic!("Event: capnproto error: ({})", e)) {
-
                     self.netinput(r);
                 } else {
                     //writeln!(std::io::stderr(), "Event: partial message").unwrap();
@@ -104,7 +101,6 @@ impl Handler for Client {
             if event.is_writable() {
                 eprintln!("Event: can write");
                 self.connection.write().unwrap();
-
                 if self.connection.outbound_queue_len() == 0 {
                     event_loop.reregister(self.connection.inner(), SERVCONN,
                         EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
@@ -125,7 +121,9 @@ impl Client {
         } else {
             body
         };
-        println!("<{}> {}", String::from_utf8(source).unwrap(), 
+        println!("<{}> {}: {}", 
+            String::from_utf8(source).unwrap(), 
+            String::from_utf8(dest).unwrap(), 
             String::from_utf8(body).unwrap());
     }
     
@@ -139,6 +137,21 @@ impl Client {
         self.keys.insert(name.clone(), prekey);
         println!("-!- Key for {}:\n{}", String::from_utf8(name).unwrap(), 
             pubkey.0.to_hex());
+    }
+
+    fn send_msg(&mut self, target: &[u8], body: &[u8]) -> 
+        capnp::message::Builder<capnp::message::HeapAllocator> {
+        
+        if self.keys.contains_key(target) {
+            println!("Sending encrypted message...");
+            let nonce = box_::gen_nonce();
+            let body = &box_::seal_precomputed(body, &nonce, 
+                &self.keys.get(target).unwrap());
+            let nonce: &[u8] = &nonce.0;
+            return serialize_send(target, body, Some(nonce))
+        } else {
+            return serialize_send(target, body, None)
+        }
     }
     
     fn netinput<S>(&mut self, r: Reader<S>) where S: ReaderSegments {
@@ -177,30 +190,20 @@ impl Client {
                                 String::from_utf8(Vec::from(target)).unwrap());
                             serialize_part(target)
                         },
-                        b"/msg" | b"/m" | b"/send" => {
-                            eprintln!("Message Sent.");
-                            if self.keys.contains_key(target) {
-                                println!("Sending encrypted message...");
-                                let nonce = box_::gen_nonce();
-                                let body = &box_::seal_precomputed(inputs[2], &nonce, 
-                                    &self.keys.get(target).unwrap());
-                                let nonce: &[u8] = &nonce.0;
-                                serialize_send(target, body, Some(nonce))
-                            } else {
-                                serialize_send(target, inputs[2], None)
-                            }
-                        },
                         b"/whois" | b"/w" => {
                             eprintln!("Whois Sent.");
                             serialize_whois(target)
+                        },
+                        b"/msg" | b"/m" | b"/send" => {
+                            eprintln!("Message Sent.");
+                            self.send_msg(target, inputs[2])
                         },
                         _ => {
                             println!("Sending message to {}", 
                                 String::from_utf8(Vec::from(cmd)).unwrap());
                             let mut body = Vec::from(target);
-                            let target = cmd;
                             body.extend_from_slice(inputs[2]);
-                            serialize_send(target, &body, None)
+                            self.send_msg(cmd, &body)
                         },
                     };
 
@@ -211,7 +214,7 @@ impl Client {
 
                     self.inbuf.clear();
                 },
-                b'\x7f' => { // backspace is delete on linux :<
+                b'\x7f' => { // backspace is delete on linux
                     self.inbuf.pop();
                 },
                 _ => {
@@ -247,22 +250,22 @@ fn main() {
     let serv_conn = match connect(&server, 8765) {
         Ok(conn) => conn,
         Err(e) => {
-            eprintln!("Remote server not running: {}", e);
+            eprintln!("Remote server error? {}", e);
             return;
         },
     };    
 
     // Load in public and secret keys
     let mut pk = File::open("./pk.key").unwrap();
-    let mut pkeys = String::new();
-    pk.read_to_string(&mut pkeys).unwrap();
-    let pkeys = pkeys.from_hex().unwrap();
-    let pk = PublicKey::from_slice(&pkeys).unwrap();
+    let mut pkstr = String::new();
+    pk.read_to_string(&mut pkstr).unwrap();
+    let pkstr = pkstr.from_hex().unwrap();
+    //let pk = PublicKey::from_slice(&pkstr).unwrap();
     
     let mut sk = File::open("./sk.key").unwrap();
-    let mut skeys = String::new();
-    sk.read_to_string(&mut skeys).unwrap();
-    let sk = skeys.from_hex().unwrap();
+    let mut skstr = String::new();
+    sk.read_to_string(&mut skstr).unwrap();
+    let sk = skstr.from_hex().unwrap();
     let sk = SecretKey::from_slice(&sk).unwrap();
 
     // Register server event handler
@@ -271,7 +274,7 @@ fn main() {
         EventSet::all(), PollOpt::empty()).unwrap();
 
     // Send Register message with public key and nick
-    let data = serialize_register(nick.into_bytes().as_slice(), &pkeys);
+    let data = serialize_register(nick.into_bytes().as_slice(), &pkstr);
     if let Err(e) = serv_conn.write_message(data) {
         eprintln!("Remote server not running: {}", e);
         return; // TODO But why though?
