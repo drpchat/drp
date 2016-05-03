@@ -260,13 +260,12 @@ fn main() {
     let pk : String = pk.chars().filter_map(|x| x.ok()).collect();
     let pkstr = pk.from_hex().unwrap();
     //let pk = PublicKey::from_slice(&pkstr).unwrap();
-    
-    let mut sk = File::open("./sk.key").unwrap();
-    let mut skstr = String::new();
-    sk.read_to_string(&mut skstr).unwrap();
-    let sk = skstr.from_hex().unwrap();
-    let sk = SecretKey::from_slice(&sk).unwrap();
 
+    let sk = File::open("./sk.key").unwrap();
+    let sk : String = sk.chars().filter_map(|x| x.ok()).collect();
+    let sk = sk.from_hex().unwrap();
+    let sk = SecretKey::from_slice(&sk).unwrap();
+    
     // Register server event handler
     let mut serv_conn = MessageStream::new(serv_conn, ReaderOptions::default());
     event_loop.register(serv_conn.inner(), SERVCONN, 
