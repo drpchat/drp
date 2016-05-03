@@ -334,7 +334,7 @@ impl Server {
             eprintln!("  got name: {}", name);
 
             if let Some(pubkey) = self.conns[*id].pubkey.clone() {
-                eprintln!("  got pubkey: {}", String::from_utf8_lossy(&pubkey));
+                eprintln!("  got pubkey: {}", pubkey.to_hex());
                 let data = serialize_theyare(name, &pubkey);
                 self.conns[token].write_message(event_loop, data);
 
