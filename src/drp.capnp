@@ -3,7 +3,7 @@
 struct Message {
     union {
         register :group {
-            name @0 :Data;
+            name @0 :Text;
             pubkey @12 :Data;
         }
 

@@ -41,9 +41,14 @@ struct Connection {
     token: Token,
     //interest: EventSet,
 
-    name: Option<Vec<u8>>,
-    pubkey: Option<Vec<u8>>,
-    channels: HashSet<Vec<u8>>,
+    //enum Data {
+    //    Client {
+            name: Option<Vec<u8>>,
+            pubkey: Option<Vec<u8>>,
+            channels: HashSet<Vec<u8>>,
+    //    },
+    //    Server { bluh: u8 },
+    //}
 }
 
 impl Connection {
@@ -68,9 +73,9 @@ struct Server {
     token: Token,
     sock: TcpListener,
 
+    channels: HashMap<Vec<u8>, HashSet<Vec<u8>>>,
     names: HashMap<Vec<u8>, Token>,
     conns: Slab<Connection>,
-    channels: HashMap<Vec<u8>, HashSet<Vec<u8>>>,
 }
 
 impl Server {
@@ -214,9 +219,8 @@ impl Server {
     }
 
     fn handle_register(&mut self, event_loop: &mut EventLoop<Server>,
-        token: Token, name: &[u8], pubkey: &[u8]) {
-        eprintln!("Registering <{}> with key:\n{}",
-            String::from_utf8_lossy(name),
+        token: Token, name: &str, pubkey: &[u8]) {
+        eprintln!("Registering <{}> with key:\n{}", name,
             pubkey.to_hex());
 
         self.add_name(token, &Vec::from(name), &Vec::from(pubkey))

@@ -14,7 +14,7 @@ macro_rules! eprintln {
 // todo: use bytes instead of string
 #[derive(Debug)]
 pub enum Message<'a> {
-    Register { name: &'a [u8], pubkey: &'a [u8] },
+    Register { name: &'a str, pubkey: &'a [u8] },
     Send { dest: &'a [u8], body: &'a [u8], nonce: Option<&'a [u8]> },
     Relay { source: &'a [u8], dest: &'a [u8], body: &'a [u8],
         nonce: Option<&'a [u8]> },
@@ -40,7 +40,7 @@ pub fn serialize<A>(msg: Message) -> Builder<HeapAllocator> {
     }
 }
 
-pub fn serialize_register(name: &[u8], pubkey: &[u8]) -> Builder<HeapAllocator> {
+pub fn serialize_register(name: &str, pubkey: &[u8]) -> Builder<HeapAllocator> {
     let mut data = Builder::new_default();
     {
         let msg = data.init_root::<message::Builder>();

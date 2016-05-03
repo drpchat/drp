@@ -272,7 +272,7 @@ fn main() {
         EventSet::all(), PollOpt::empty()).unwrap();
 
     // Send Register message with public key and nick
-    let data = serialize_register(nick.into_bytes().as_slice(), &pkstr);
+    let data = serialize_register(&nick, &pkstr);
     if let Err(e) = serv_conn.write_message(data) {
         eprintln!("Remote server not running: {}", e);
         return; // TODO But why though?
