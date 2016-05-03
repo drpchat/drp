@@ -8,7 +8,7 @@ struct Message {
         }
 
         send :group {
-            dest @1 :Data;
+            dest @1 :Text;
             body @2 :Data;
             union {
                 nonce @13 :Data;
@@ -18,31 +18,31 @@ struct Message {
 
 
         join :group {
-            channel @6 :Data;
+            channel @6 :Text;
         }
 
         part :group {
-            channel @7 :Data;
+            channel @7 :Text;
         }
 
 
         whois :group {
-            name @9 :Data;
+            name @9 :Text;
         }
 
         theyare :group {
-            name @10 :Data;
+            name @10 :Text;
             pubkey @11 :Data;
         }
 
 
         response :group {
-            body @8 :Data;
+            body @8 :Text;
         }
 
         relay :group {
-            source @3 :Data;
-            dest @4 :Data;
+            source @3 :Text;
+            dest @4 :Text;
             body @5 :Data;
             union {
                 nonce @15 :Data;

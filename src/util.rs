@@ -15,14 +15,14 @@ macro_rules! eprintln {
 #[derive(Debug)]
 pub enum Message<'a> {
     Register { name: &'a str, pubkey: &'a [u8] },
-    Send { dest: &'a [u8], body: &'a [u8], nonce: Option<&'a [u8]> },
-    Relay { source: &'a [u8], dest: &'a [u8], body: &'a [u8],
+    Send { dest: &'a str, body: &'a [u8], nonce: Option<&'a [u8]> },
+    Relay { source: &'a str, dest: &'a str, body: &'a [u8],
         nonce: Option<&'a [u8]> },
-    Join { channel: &'a [u8] },
-    Part { channel: &'a [u8] },
-    Response { body: &'a [u8] },
-    Whois { name: &'a [u8] },
-    Theyare { name: &'a [u8], pubkey: &'a [u8] },
+    Join { channel: &'a str },
+    Part { channel: &'a str },
+    Response { body: &'a str },
+    Whois { name: &'a str },
+    Theyare { name: &'a str, pubkey: &'a [u8] },
 }
 
 pub fn serialize<A>(msg: Message) -> Builder<HeapAllocator> {
@@ -51,7 +51,7 @@ pub fn serialize_register(name: &str, pubkey: &[u8]) -> Builder<HeapAllocator> {
     data
 }
 
-pub fn serialize_send(dest: &[u8], body: &[u8], nonce: Option<&[u8]>)
+pub fn serialize_send(dest: &str, body: &[u8], nonce: Option<&[u8]>)
     -> Builder<HeapAllocator> {
 
     let mut data = Builder::new_default();
@@ -69,7 +69,7 @@ pub fn serialize_send(dest: &[u8], body: &[u8], nonce: Option<&[u8]>)
     data
 }
 
-pub fn serialize_relay(source: &[u8], dest: &[u8], body: &[u8],
+pub fn serialize_relay(source: &str, dest: &str, body: &[u8],
     nonce: Option<&[u8]>) -> Builder<HeapAllocator> {
     let mut data = Builder::new_default();
     {
@@ -87,7 +87,7 @@ pub fn serialize_relay(source: &[u8], dest: &[u8], body: &[u8],
     data
 }
 
-pub fn serialize_join(channel: &[u8]) -> Builder<HeapAllocator> {
+pub fn serialize_join(channel: &str) -> Builder<HeapAllocator> {
     let mut data = Builder::new_default();
     {
         let msg = data.init_root::<message::Builder>();
@@ -98,7 +98,7 @@ pub fn serialize_join(channel: &[u8]) -> Builder<HeapAllocator> {
     data
 }
 
-pub fn serialize_part(channel: &[u8]) -> Builder<HeapAllocator> {
+pub fn serialize_part(channel: &str) -> Builder<HeapAllocator> {
     let mut data = Builder::new_default();
     {
         let msg = data.init_root::<message::Builder>();
@@ -109,7 +109,7 @@ pub fn serialize_part(channel: &[u8]) -> Builder<HeapAllocator> {
     data
 }
 
-pub fn serialize_response(body: &[u8]) -> Builder<HeapAllocator> {
+pub fn serialize_response(body: &str) -> Builder<HeapAllocator> {
     let mut data = Builder::new_default();
     {
         let msg = data.init_root::<message::Builder>();
@@ -120,7 +120,7 @@ pub fn serialize_response(body: &[u8]) -> Builder<HeapAllocator> {
     data
 }
 
-pub fn serialize_whois(name: &[u8]) -> Builder<HeapAllocator> {
+pub fn serialize_whois(name: &str) -> Builder<HeapAllocator> {
     let mut data = Builder::new_default();
     {
         let msg = data.init_root::<message::Builder>();
@@ -131,7 +131,7 @@ pub fn serialize_whois(name: &[u8]) -> Builder<HeapAllocator> {
     data
 }
 
-pub fn serialize_theyare(name: &[u8], pubkey: &[u8]) -> Builder<HeapAllocator> {
+pub fn serialize_theyare(name: &str, pubkey: &[u8]) -> Builder<HeapAllocator> {
     let mut data = Builder::new_default();
     {
         let msg = data.init_root::<message::Builder>();

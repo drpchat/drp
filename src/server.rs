@@ -43,9 +43,9 @@ struct Connection {
 
     //enum Data {
     //    Client {
-            name: Option<Vec<u8>>,
+            name: Option<String>,
             pubkey: Option<Vec<u8>>,
-            channels: HashSet<Vec<u8>>,
+            channels: HashSet<String>,
     //    },
     //    Server { bluh: u8 },
     //}
@@ -73,8 +73,8 @@ struct Server {
     token: Token,
     sock: TcpListener,
 
-    channels: HashMap<Vec<u8>, HashSet<Vec<u8>>>,
-    names: HashMap<Vec<u8>, Token>,
+    channels: HashMap<String, HashSet<String>>,
+    names: HashMap<String, Token>,
     conns: Slab<Connection>,
 }
 
@@ -90,7 +90,7 @@ impl Server {
     }
 
     // a new user is trying to register - add them to the db
-    fn add_name(&mut self, token: Token, name: &Vec<u8>, pubkey: &Vec<u8>)
+    fn add_name(&mut self, token: Token, name: &String, pubkey: &Vec<u8>)
         -> Option<()> {
 
         if self.names.contains_key(name) {
@@ -105,7 +105,7 @@ impl Server {
     }
 
     // a user is joining a channel
-    fn name_joins(&mut self, name: &Vec<u8>, channel: &Vec<u8>) -> Option<()> {
+    fn name_joins(&mut self, name: &String, channel: &String) -> Option<()> {
         //if self.channels.contains_key(name) {
         //    return None;
         //}
@@ -126,7 +126,7 @@ impl Server {
     }
 
     // a user is leaving a channel
-    fn name_leaves(&mut self, name: &Vec<u8>, channel: &Vec<u8>) -> Option<()> {
+    fn name_leaves(&mut self, name: &String, channel: &String) -> Option<()> {
         // remove name from channel
         let mut chans = match self.channels.get_mut(channel) {
             None => return None,
@@ -147,7 +147,7 @@ impl Server {
     }
 
     // name quits the server: needs to leave all channels and clear name
-    fn name_quits(&mut self, name: &Vec<u8>) {
+    fn name_quits(&mut self, name: &String) {
         for channel in self.conns[self.names[name]].channels.clone() {
             self.name_leaves(name, &channel);
         }
@@ -223,21 +223,21 @@ impl Server {
         eprintln!("Registering <{}> with key:\n{}", name,
             pubkey.to_hex());
 
-        self.add_name(token, &Vec::from(name), &Vec::from(pubkey))
+        self.add_name(token, &String::from(name), &Vec::from(pubkey))
             .unwrap_or_else(|| {
-            let data = serialize_response(b"dude ur not them");
+            let data = serialize_response("dude ur not them");
             self.conns[token].write_message(event_loop, data);
         });
     }
 
     fn handle_send(&mut self, event_loop: &mut EventLoop<Server>,
-    token: Token, dest: &[u8], body: &[u8], nonce: Option<&[u8]>) {
+    token: Token, dest: &str, body: &[u8], nonce: Option<&[u8]>) {
         let name = {
             let mut conn = &mut self.conns[token];
             match conn.name.clone() {
                 Some(name) => name,
                 None => {
-                    let data = serialize_response(b"this isnt 4chan");
+                    let data = serialize_response("this isnt 4chan");
                     conn.write_message(event_loop, data);
                     return
                 }
@@ -245,21 +245,20 @@ impl Server {
         };
 
         eprintln!("sending: {} -> {}: {:?}",
-            String::from_utf8(name.clone()).unwrap(),
-            String::from_utf8_lossy(dest),
+            name.clone(), dest,
             String::from_utf8_lossy(body));
 
         if let Some(chanlist) = self.channels.get(dest) {
             for dest in chanlist {
                 eprintln!("sending: {} -> {}: {:?}",
-                    String::from_utf8(name.clone()).unwrap(),
-                    String::from_utf8(dest.clone()).unwrap(),
+                    name.clone(),
+                    dest.clone(),
                     String::from_utf8_lossy(body));
 
                 let token = *self.names.get(dest)
                     .expect("couldn't resolve dest");
 
-                let data = serialize_relay(name.as_slice(),
+                let data = serialize_relay(&name,
                     dest, body, nonce);
 
                 self.conns[token].write_message(event_loop, data);
@@ -268,7 +267,7 @@ impl Server {
             let token = *self.names.get(dest)
                 .expect("couldn't resolve dest");
 
-            let data = serialize_relay(name.as_slice(),
+            let data = serialize_relay(&name,
                 dest, body, nonce);
 
             self.conns[token].write_message(event_loop, data);
@@ -276,7 +275,7 @@ impl Server {
     }
 
     fn handle_relay(&mut self, event_loop: &mut EventLoop<Server>,
-    token: Token, source: &[u8], dest: &[u8], body: &[u8],
+    token: Token, source: &str, dest: &str, body: &[u8],
     nonce: Option<&[u8]>) {
         eprintln!("handling relay");
         let token = *self.names.get(dest).unwrap();
@@ -286,53 +285,53 @@ impl Server {
     }
 
     fn handle_join(&mut self, event_loop: &mut EventLoop<Server>,
-    token: Token, channel: &[u8]) {
+    token: Token, channel: &str) {
         if let Some(name) = self.conns[token].name.clone() {
             eprintln!("joining: {} -> {}",
-                String::from_utf8(name.clone()).unwrap(),
-                String::from_utf8_lossy(channel));
+                name.clone(),
+                channel);
 
-            self.name_joins(&name, &Vec::from(channel)).unwrap_or_else(|| {
-                let data = serialize_response(b"you're already there!!");
+            self.name_joins(&name, &String::from(channel)).unwrap_or_else(|| {
+                let data = serialize_response("you're already there!!");
                 self.conns[token].write_message(event_loop, data);
             });
         } else {
-            let data = serialize_response(b"who ARE u!?!");
+            let data = serialize_response("who ARE u!?!");
             self.conns[token].write_message(event_loop, data);
         }
     }
 
     fn handle_part(&mut self, event_loop: &mut EventLoop<Server>,
-    token: Token, channel: &[u8]) {
+    token: Token, channel: &str) {
         if let Some(name) = self.conns[token].name.clone() {
             eprintln!("parting: {} -> {}",
-                String::from_utf8(name.clone()).unwrap(),
-                String::from_utf8_lossy(channel));
+                name.clone(),
+                String::from(channel));
 
-            self.name_leaves(&name, &Vec::from(channel)).unwrap_or_else(|| {
-                let data = serialize_response(b"you're not even there!!");
+            self.name_leaves(&name, &String::from(channel)).unwrap_or_else(|| {
+                let data = serialize_response("you're not even there!!");
                 self.conns[token].write_message(event_loop, data);
             });
         } else {
-            let data = serialize_response(b"who ARE u!?!");
+            let data = serialize_response("who ARE u!?!");
             self.conns[token].write_message(event_loop, data);
         }
     }
 
     fn handle_response(&mut self, event_loop: &mut EventLoop<Server>,
-    token: Token, body: &[u8]) {
+    token: Token, body: &str) {
         eprintln!("handle_response");
 
-        let data = serialize_response(b"no ur a client");
+        let data = serialize_response("no ur a client");
         self.conns[token].write_message(event_loop, data);
     }
 
     fn handle_whois(&mut self, event_loop: &mut EventLoop<Server>,
-        token: Token, name: &[u8]) {
+        token: Token, name: &str) {
         eprintln!("handle_whois");
 
         if let Some(id) = self.names.get(name) {
-            eprintln!("  got name: {}", String::from_utf8_lossy(name));
+            eprintln!("  got name: {}", name);
 
             if let Some(pubkey) = self.conns[*id].pubkey.clone() {
                 eprintln!("  got pubkey: {}", String::from_utf8_lossy(&pubkey));
@@ -349,15 +348,15 @@ impl Server {
             }
         }
 
-        let data = serialize_response(b"they don't exist");
+        let data = serialize_response("they don't exist");
         self.conns[token].write_message(event_loop, data);
     }
 
     fn handle_theyare(&mut self, event_loop: &mut EventLoop<Server>,
-        token: Token, name: &[u8], pubkey: &[u8]) {
+        token: Token, name: &str, pubkey: &[u8]) {
         eprintln!("handle_theyare");
 
-        let data = serialize_response(b"i already NEW that");
+        let data = serialize_response("i already NEW that");
         self.conns[token].write_message(event_loop, data);
     }
 }
