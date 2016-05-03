@@ -1,4 +1,5 @@
 #![feature(lookup_host)]
+#![feature(io)]
 
 extern crate mio;
 extern crate bytes;
@@ -94,7 +95,7 @@ impl Handler for Client {
                     .unwrap_or_else(|e| panic!("Event: capnproto error: ({})", e)) {
                     self.netinput(r);
                 } else {
-                    //writeln!(std::io::stderr(), "Event: partial message").unwrap();
+                    //eprintln!("Event: partial message");
                 }
             }
 
@@ -111,37 +112,37 @@ impl Handler for Client {
 }
 
 impl Client {
-    fn handle_relay(&mut self, source: Vec<u8>, 
-        dest: Vec<u8>, body: Vec<u8>, nonce: Option<&[u8]>) {
+    fn handle_relay(&mut self, source: &[u8], 
+        dest: &[u8], body: Vec<u8>, nonce: Option<&[u8]>) {
         let body = if let Some(nonce) = nonce {
             println!("Decrypting...");
-            let prekey = self.keys.get(&source).unwrap();
+            let prekey = self.keys.get(source).unwrap();
             box_::open_precomputed(&body, 
                 &Nonce::from_slice(nonce).unwrap(), &prekey).unwrap()
         } else {
             body
         };
         println!("<{}> {}: {}", 
-            String::from_utf8(source).unwrap(), 
-            String::from_utf8(dest).unwrap(), 
-            String::from_utf8(body).unwrap());
+            String::from_utf8_lossy(source), 
+            String::from_utf8_lossy(dest),
+            String::from_utf8_lossy(&body),
+        );
     }
     
-    fn handle_response(&mut self, body: Vec<u8>) {
-        println!("-!- {}", String::from_utf8(body).unwrap());
+    fn handle_response(&mut self, body: &[u8]) {
+        println!("-!- {}", String::from_utf8_lossy(body));
     }
     
     fn handle_theyare(&mut self, name: Vec<u8>, pubkey: &[u8]) {
         let pubkey = PublicKey::from_slice(pubkey).unwrap();
         let prekey = box_::precompute(&pubkey, &self.seckey);
         self.keys.insert(name.clone(), prekey);
-        println!("-!- Key for {}:\n{}", String::from_utf8(name).unwrap(), 
+        println!("-!- Key for {}:\n{}", String::from_utf8_lossy(&name), 
             pubkey.0.to_hex());
     }
 
     fn send_msg(&mut self, target: &[u8], body: &[u8]) -> 
         capnp::message::Builder<capnp::message::HeapAllocator> {
-        
         if self.keys.contains_key(target) {
             println!("Sending encrypted message...");
             let nonce = box_::gen_nonce();
@@ -157,10 +158,9 @@ impl Client {
     fn netinput<S>(&mut self, r: Reader<S>) where S: ReaderSegments {
         match deserialize(&r).unwrap() {
             Message::Relay { source, dest, body, nonce } =>
-                self.handle_relay(Vec::from(source), 
-                     Vec::from(dest), Vec::from(body), nonce),
+                self.handle_relay(source, dest, Vec::from(body), nonce),
             Message::Response { body } =>
-                self.handle_response(Vec::from(body)),
+                self.handle_response(body),
             Message::Theyare { name, pubkey } =>
                 self.handle_theyare(Vec::from(name), pubkey),
             _ => (),
@@ -182,12 +182,12 @@ impl Client {
                     let data = match cmd {
                         b"/join" | b"/j" => {
                             println!("Joining {}",
-                                String::from_utf8(Vec::from(target)).unwrap());
+                                String::from_utf8_lossy(target));
                             serialize_join(target)
                         },
                         b"/part" | b"/p" => {
                             println!("Leaving {}",
-                                String::from_utf8(Vec::from(target)).unwrap());
+                                String::from_utf8_lossy(target));
                             serialize_part(target)
                         },
                         b"/whois" | b"/w" => {
@@ -200,7 +200,7 @@ impl Client {
                         },
                         _ => {
                             println!("Sending message to {}", 
-                                String::from_utf8(Vec::from(cmd)).unwrap());
+                                String::from_utf8_lossy(cmd));
                             let mut body = Vec::from(target);
                             body.extend_from_slice(inputs[2]);
                             self.send_msg(cmd, &body)
@@ -256,10 +256,9 @@ fn main() {
     };    
 
     // Load in public and secret keys
-    let mut pk = File::open("./pk.key").unwrap();
-    let mut pkstr = String::new();
-    pk.read_to_string(&mut pkstr).unwrap();
-    let pkstr = pkstr.from_hex().unwrap();
+    let pk = File::open("./pk.key").unwrap();
+    let pk : String = pk.chars().filter_map(|x| x.ok()).collect();
+    let pkstr = pk.from_hex().unwrap();
     //let pk = PublicKey::from_slice(&pkstr).unwrap();
     
     let mut sk = File::open("./sk.key").unwrap();
