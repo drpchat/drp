@@ -50,7 +50,7 @@ struct Client {
     inbuf: String,
     seckey: SecretKey,
     //pubkey: PublicKey,
-    keys: HashMap<Vec<u8>, PrecomputedKey>,
+    keys: HashMap<String, PrecomputedKey>,
     connection: MessageStream<TcpStream>,
 }
 
@@ -73,7 +73,7 @@ impl Handler for Client {
             if event.is_readable() {
                 let mut buf = vec![0; 512];
                 match self.pipe.read(&mut buf) {
-                    Ok(n) => self.stdinput(&buf, n, event_loop),
+                    Ok(_) => self.stdinput(&buf, event_loop),
                     Err(e) => {
                         eprintln!("Event: stdin read error {}", e);
                         event_loop.shutdown();
@@ -113,19 +113,17 @@ impl Handler for Client {
 }
 
 impl Client {
-    fn handle_relay(&mut self, source: &str, 
-        dest: &str, body: Vec<u8>, nonce: Option<&[u8]>) {
+    fn handle_relay(&mut self, source: &str, dest: &str, 
+        body: Vec<u8>, nonce: Option<&[u8]>) {
         let body = if let Some(nonce) = nonce {
             println!("Decrypting...");
-            let prekey = self.keys.get(&Vec::from(source)).unwrap();
+            let prekey = self.keys.get(source).unwrap();
             box_::open_precomputed(&body, 
                 &Nonce::from_slice(nonce).unwrap(), &prekey).unwrap()
         } else {
             body
         };
-        println!("<{}> {}: {}", 
-            source,
-            dest,
+        println!("<{}> {}: {}", source, dest,
             String::from_utf8_lossy(&body),
         );
     }
@@ -137,18 +135,18 @@ impl Client {
     fn handle_theyare(&mut self, name: &str, pubkey: &[u8]) {
         let pubkey = PublicKey::from_slice(pubkey).unwrap();
         let prekey = box_::precompute(&pubkey, &self.seckey);
-        self.keys.insert(Vec::from(name), prekey);
+        self.keys.insert(String::from(name), prekey);
         println!("-!- Key for {}:\n{}", name, 
             pubkey.0.to_hex());
     }
 
     fn send_msg(&mut self, target: &str, body: &[u8]) -> 
         capnp::message::Builder<capnp::message::HeapAllocator> {
-        if self.keys.contains_key(&Vec::from(target)) {
+        if self.keys.contains_key(target) {
             println!("Sending encrypted message...");
             let nonce = box_::gen_nonce();
             let body = &box_::seal_precomputed(body, &nonce, 
-                &self.keys.get(&Vec::from(target)).unwrap());
+                &self.keys.get(target).unwrap());
             let nonce: &[u8] = &nonce.0;
             return serialize_send(target, body, Some(nonce))
         } else {
@@ -169,11 +167,11 @@ impl Client {
     }
 
     // len is the amount of the buffer we actually filled up
-    fn stdinput(&mut self, buf: &Vec<u8>, len: usize, event_loop: &mut EventLoop<Client>) {
+    fn stdinput(&mut self, buf: &Vec<u8>, event_loop: &mut EventLoop<Client>) {
         let mut buf = buf.chars();
         while let Some(Ok(c)) = buf.next() {
             match c {
-                '\n' => { // this is what return does ?
+                '\n' => { // Successfully reached end of line
                     let inputs = self.inbuf.clone();
                     let inputs: Vec<&str> = 
                         inputs.splitn(3, |x| x == ' ').collect();
@@ -198,18 +196,16 @@ impl Client {
                             eprintln!("Message Sent.");
                             self.send_msg(target, inputs[2].as_bytes())
                         },
-                        _ => {
+                        _ => { // Assume you want a message in form <target> body
                             println!("Sending message to {}", cmd);
-                            //let mut body = Vec::from(target);
-                            //body.extend_from_slice(inputs[2]);
-                            self.send_msg(cmd, inputs[2].as_bytes())
+                            let body = String::from(target) + inputs[2];
+                            self.send_msg(cmd, (body).as_bytes())
                         },
                     };
-
+                    // Send the resulting protocol message to the server
                     self.connection.write_message(data).unwrap();
                 },
-
-                _ => {
+                _ => { // Non end of line character, add to buffer
                     self.inbuf.push(c);
                 },
             }
