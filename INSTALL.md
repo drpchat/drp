@@ -2,15 +2,18 @@
 
 DRP currently carries the following package dependencies:
 
-libsodium-dev *
-capnproto
-pkg-config *
+- libsodium-dev *
+
+- capnproto
+
+- pkg-config *
 
 \* These packages can only be found in the unstable (sid) debian repository, or in the repo of any debian unstable derivative (like ubuntu 16.04).
 
 If you would like to build and install these from source, you can find them here:
 
 https://download.libsodium.org/doc/
+
 https://capnproto.org/install.html
 
 ## Rust
@@ -24,7 +27,9 @@ https://www.rust-lang.org/downloads.html
 Once these depencies are installed, the last step is to clone this repository, cd into it, and run "cargo build" to download all of the rust dependencies and compile the project.
 
 > git clone https://github.com/drpchat/drp.git
+
 > cd drp
+
 > cargo build
 
 If the build is successful, see USERGUIDE.md for information about using the client and server binaries!
