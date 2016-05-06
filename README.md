@@ -14,9 +14,7 @@ project.
 
 ```
 git clone https://github.com/drpchat/drp.git
-
 cd drp
-
 cargo build
 ```
 
