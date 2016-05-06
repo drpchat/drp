@@ -21,6 +21,10 @@ cargo build
 For more details see `INSTALL.md`
 
 ## Usage
+Before running the client, you need to generate a public and private key with
+the `keygen` binary.  Make sure that these keys are in whichever directory you
+will be running `drpc` from.
+
 Once you have built the client binary, you can either run it with `cargo run
 --bin drpc <nick> <server>` or by navigating to `drp/target/debug/` where the
 `drpc` binary is located.
