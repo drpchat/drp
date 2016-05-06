@@ -18,6 +18,8 @@ cd drp
 cargo build
 ```
 
+For more details see `INSTALL.md`
+
 ## Usage
 Once you have built the client binary, you can either run it with `cargo run
 --bin drpc <nick> <server>` or by navigating to `drp/target/debug/` where the
