@@ -1,11 +1,13 @@
 #![feature(lookup_host)]
 #![feature(io)]
+#![feature(const_fn)]
 
 extern crate mio;
 extern crate bytes;
 extern crate nix;
 extern crate rustc_serialize;
 extern crate sodiumoxide;
+extern crate libc;
 
 extern crate capnp;
 extern crate capnp_nonblock;
@@ -23,6 +25,11 @@ use mio::*;
 use mio::tcp::TcpStream;
 use mio::unix::PipeReader;
 
+use libc::{free, c_int, c_char, c_void};
+use std::ffi::CStr;
+
+use std::ptr::null;
+
 use rustc_serialize::hex::*;
 use sodiumoxide::crypto::box_;
 use sodiumoxide::crypto::box_::curve25519xsalsa20poly1305::*;
@@ -37,7 +44,31 @@ use std::collections::HashMap;
 use std::net::{SocketAddr, lookup_host};
 
 use std::env;
+use std::process::exit;
 
+#[link(name = "readline")] // not quite fully identical to libedit, it seems:
+                           // rl_copy_text and friends are only here
+extern {
+    fn rl_callback_handler_install(prompt: *const c_char,
+        lhandler: extern fn(*const c_char));
+    fn rl_callback_read_char();
+
+    fn rl_copy_text(start: c_int, end: c_int) -> *const c_char;
+    fn rl_delete_text(start: c_int, end: c_int);
+    fn rl_insert_text(text: *const c_char) -> i32;
+
+    fn rl_redisplay();
+
+    static rl_end: c_int;
+}
+
+static mut read_line: *const c_char = null();
+extern fn stdinput_raw(line: *const c_char) {
+    unsafe {
+        free(read_line as *mut c_void);
+        read_line = line;
+    }
+}
 
 // Setup some tokens to allow us to identify which event is
 // for which socket.
@@ -72,12 +103,15 @@ impl Handler for Client {
 
             if event.is_readable() {
                 let mut buf = vec![0; 512];
-                match self.pipe.read(&mut buf) {
-                    Ok(_) => self.stdinput(&buf, event_loop),
-                    Err(e) => {
-                        eprintln!("Event: stdin read error {}", e);
-                        event_loop.shutdown();
-                    },
+
+                unsafe {
+                    rl_callback_read_char();
+                    if !read_line.is_null() {
+                        let mut l = Vec::from(CStr::from_ptr(read_line).to_bytes());
+                        l.push(b'\n');
+                        self.stdinput(&l, event_loop);
+                        read_line = null();
+                    }
                 }
             }
         } else {
@@ -127,7 +161,7 @@ impl Client {
             String::from_utf8_lossy(&body),
         );
     }
-    
+
     fn handle_response(&mut self, body: &str) {
         println!("-!- {}", body);
     }
@@ -155,6 +189,14 @@ impl Client {
     }
     
     fn netinput<S>(&mut self, r: Reader<S>) where S: ReaderSegments {
+        // make prog1 macro later
+        let buf = unsafe {
+            let buf = rl_copy_text(0, rl_end);
+            rl_delete_text(0, rl_end);
+            rl_redisplay();
+            buf
+        };
+
         match deserialize(&r).unwrap() {
             Message::Relay { source, dest, body, nonce } =>
                 self.handle_relay(source, dest, Vec::from(body), nonce),
@@ -164,6 +206,12 @@ impl Client {
                 self.handle_theyare(name, pubkey),
             _ => (),
         }    
+
+        unsafe {
+            rl_callback_handler_install(&0, stdinput_raw);
+            rl_insert_text(buf);
+            rl_redisplay();
+        }
     }
 
     // len is the amount of the buffer we actually filled up
@@ -211,13 +259,13 @@ impl Client {
             }
         }
     
-    if buf.next().is_some() {
-        println!("-?- Wtf was that?");
-    }
-    event_loop.reregister(self.connection.inner(), SERVCONN,
-        EventSet::all(), PollOpt::empty()).unwrap();
+        if buf.next().is_some() {
+            println!("-?- Wtf was that?");
+        }
+        event_loop.reregister(self.connection.inner(), SERVCONN,
+            EventSet::all(), PollOpt::empty()).unwrap();
 
-    self.inbuf.clear();
+        self.inbuf.clear();
     }
 }
 
@@ -241,6 +289,9 @@ fn main() {
     let sock = unsafe { PipeReader::from_raw_fd(0) };
     event_loop.register(&sock, STDIN,
         EventSet::all() ^ EventSet::writable(), PollOpt::empty()).unwrap();
+
+    // register stdin callback with readline
+    unsafe { rl_callback_handler_install(&0, stdinput_raw); }
 
     // Connect to server
     let serv_conn = match connect(&server, 8765) {
