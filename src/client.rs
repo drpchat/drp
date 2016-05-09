@@ -52,6 +52,7 @@ extern {
     fn rl_callback_handler_install(prompt: *const c_char,
         lhandler: extern fn(*const c_char));
     fn rl_callback_read_char();
+    fn rl_callback_handler_remove();
 
     fn rl_copy_text(start: c_int, end: c_int) -> *const c_char;
     fn rl_delete_text(start: c_int, end: c_int);
@@ -278,6 +279,14 @@ fn connect(host: &str, port: u16) -> io::Result<TcpStream> {
         )
 }
 
+// :(
+struct Sacrifice;
+impl Drop for Sacrifice {
+    fn drop(&mut self) {
+        unsafe { rl_callback_handler_remove(); }
+    }
+}
+
 fn main() {
     let nick = env::args().nth(1).unwrap();
     let server = env::args().nth(2).unwrap();
@@ -292,6 +301,7 @@ fn main() {
 
     // register stdin callback with readline
     unsafe { rl_callback_handler_install(&0, stdinput_raw); }
+    let sac = Sacrifice;
 
     // Connect to server
     let serv_conn = match connect(&server, 8765) {
